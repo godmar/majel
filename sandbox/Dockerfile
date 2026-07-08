@@ -5,7 +5,7 @@
 # Kept lean deliberately: image size dominates cold-start time (first pull on
 # a node), which is the bulk of task latency. Layers are ordered stable-first
 # so version bumps only re-pull the small top layers.
-FROM node:22-slim
+FROM node:24-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv \
