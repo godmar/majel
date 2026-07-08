@@ -1,5 +1,8 @@
 # VT Library AI Agent Platform
 
+**Live at: https://vtlibai-cc.endeavour.cs.vt.edu** (VT CAS login; accounts must
+be enabled by an admin)
+
 A container-based agent platform for Virginia Tech Libraries. It has two parts:
 
 1. **C2C server** (`c2c/`) — a command-and-control web application (React Router v7 +
@@ -50,6 +53,20 @@ contain credentials and are gitignored. `.env.sample` documents every variable.
 docker login container.cs.vt.edu   # use REGISTRY_USERNAME / REGISTRY_PASSWORD
 docker build -t $CC_CONTAINER_IMAGE c2c/ && docker push $CC_CONTAINER_IMAGE
 docker build -t $SANDBOX_CONTAINER_IMAGE sandbox/ && docker push $SANDBOX_CONTAINER_IMAGE
+```
+
+## Machine API (external triggers)
+
+Tasks can be created programmatically — the hook for future event-driven
+agents. Authenticate with `CC_BEARER_TOKEN`:
+
+```sh
+curl -X POST https://vtlibai-cc.endeavour.cs.vt.edu/api/tasks \
+  -H "Authorization: Bearer $CC_BEARER_TOKEN" -H "Content-Type: application/json" \
+  -d '{"agent": "Majel", "prompt": "…", "model": "vt-openwebui/GLM-5.2"}'
+
+curl https://vtlibai-cc.endeavour.cs.vt.edu/api/tasks/<id> \
+  -H "Authorization: Bearer $CC_BEARER_TOKEN"
 ```
 
 ## Deployment
