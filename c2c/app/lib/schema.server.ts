@@ -47,13 +47,13 @@ export interface ProviderModel {
   outputLimit?: number;
 }
 
+// Providers carry no API key: keys are strictly per user (user_provider_keys).
 export const providers = pgTable("providers", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().unique(),
   displayName: text("display_name"),
   npm: text("npm").notNull().default("@ai-sdk/openai-compatible"),
   baseUrl: text("base_url").notNull(),
-  apiKey: text("api_key").notNull(),
   models: jsonb("models").$type<ProviderModel[]>().notNull().default([]),
   enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

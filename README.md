@@ -58,12 +58,13 @@ docker build -t $SANDBOX_CONTAINER_IMAGE sandbox/ && docker push $SANDBOX_CONTAI
 ## Machine API (external triggers)
 
 Tasks can be created programmatically — the hook for future event-driven
-agents. Authenticate with `CC_BEARER_TOKEN`:
+agents. Authenticate with `CC_BEARER_TOKEN`. LLM API keys are per user, so
+every task runs on behalf of a `user` (their key is used):
 
 ```sh
 curl -X POST https://vtlibai-cc.endeavour.cs.vt.edu/api/tasks \
   -H "Authorization: Bearer $CC_BEARER_TOKEN" -H "Content-Type: application/json" \
-  -d '{"agent": "Majel", "prompt": "…", "model": "vt-openwebui/GLM-5.2"}'
+  -d '{"agent": "Majel", "prompt": "…", "user": "gback", "model": "vt-openwebui/GLM-5.2"}'
 
 curl https://vtlibai-cc.endeavour.cs.vt.edu/api/tasks/<id> \
   -H "Authorization: Bearer $CC_BEARER_TOKEN"

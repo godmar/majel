@@ -21,7 +21,6 @@ export async function loader({ request }: Route.LoaderArgs) {
       name: providers.name,
       displayName: providers.displayName,
       baseUrl: providers.baseUrl,
-      hasDefault: providers.apiKey,
     })
     .from(providers)
     .where(eq(providers.enabled, true))
@@ -38,7 +37,6 @@ export async function loader({ request }: Route.LoaderArgs) {
       id: p.id,
       name: p.displayName ?? p.name,
       baseUrl: p.baseUrl,
-      hasDefault: p.hasDefault.length > 0,
       keySetAt: keyByProvider.get(p.id)?.toISOString() ?? null,
     })),
   };
@@ -101,8 +99,6 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
               </Typography>
               {p.keySetAt ? (
                 <Chip size="small" color="success" label="your key is set" />
-              ) : p.hasDefault ? (
-                <Chip size="small" color="warning" label="using shared default key" />
               ) : (
                 <Chip size="small" color="error" label="no key — tasks will fail" />
               )}

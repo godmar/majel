@@ -30,7 +30,6 @@ const schema = z.object({
   SANDBOX_NODE_SELECTOR: z.string().default(""),
 
   LLM_API_BASE_URL: z.string().default(""),
-  LLM_API_KEY: z.string().default(""),
 
   DEV_FAKE_USER: z.string().optional(),
 });

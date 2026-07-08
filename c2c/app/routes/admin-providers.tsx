@@ -78,7 +78,6 @@ export async function loader({ request }: Route.LoaderArgs) {
       modelIds: p.models.map((m) => m.id),
       modelsText: modelsToText(p.models),
       enabled: p.enabled,
-      hasApiKey: p.apiKey.length > 0,
     })),
   };
 }
@@ -87,7 +86,6 @@ const upsertSchema = z.object({
   name: z.string().trim().min(1).max(64),
   displayName: z.string().trim().default(""),
   baseUrl: z.string().trim().url(),
-  apiKey: z.string().default(""),
   models: z.string().trim().default(""),
 });
 
@@ -101,7 +99,6 @@ export async function action({ request }: Route.ActionArgs) {
       name: form.get("name"),
       displayName: form.get("displayName"),
       baseUrl: form.get("baseUrl"),
-      apiKey: form.get("apiKey"),
       models: form.get("models") ?? "",
     });
     if (!parsed.success) {
@@ -113,7 +110,6 @@ export async function action({ request }: Route.ActionArgs) {
         name: d.name,
         displayName: d.displayName || d.name,
         baseUrl: d.baseUrl,
-        apiKey: d.apiKey,
         models: parseModels(d.models),
       });
     } catch {
@@ -130,7 +126,6 @@ export async function action({ request }: Route.ActionArgs) {
       name: form.get("name"),
       displayName: form.get("displayName"),
       baseUrl: form.get("baseUrl"),
-      apiKey: form.get("apiKey"),
       models: form.get("models") ?? "",
     });
     if (!parsed.success) {
@@ -145,8 +140,6 @@ export async function action({ request }: Route.ActionArgs) {
           displayName: d.displayName || d.name,
           baseUrl: d.baseUrl,
           models: parseModels(d.models),
-          // Blank API key in the form means "keep the current key".
-          ...(d.apiKey ? { apiKey: d.apiKey } : {}),
           updatedAt: new Date(),
         })
         .where(eq(providers.id, id));
@@ -172,7 +165,6 @@ interface EditableProvider {
   displayName: string | null;
   baseUrl: string;
   modelsText: string;
-  hasApiKey: boolean;
 }
 
 function EditProviderDialog({
@@ -204,13 +196,6 @@ function EditProviderDialog({
                 />
               </Stack>
               <TextField name="baseUrl" label="Base URL" size="small" required defaultValue={provider.baseUrl} />
-              <TextField
-                name="apiKey"
-                label={provider.hasApiKey ? "API key (leave blank to keep current)" : "API key"}
-                size="small"
-                type="password"
-                autoComplete="new-password"
-              />
               <TextField
                 name="models"
                 label={`Models (${MODELS_FORMAT})`}
@@ -257,7 +242,6 @@ export default function AdminProviders({ loaderData, actionData }: Route.Compone
               <TextField name="baseUrl" label="Base URL (OpenAI-compatible)" size="small" required fullWidth />
             </Stack>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-              <TextField name="apiKey" label="API key" size="small" type="password" fullWidth />
               <TextField
                 name="models"
                 label={`Models (${MODELS_FORMAT})`}
@@ -288,7 +272,6 @@ export default function AdminProviders({ loaderData, actionData }: Route.Compone
               <TableCell>Name</TableCell>
               <TableCell>Base URL</TableCell>
               <TableCell>Models</TableCell>
-              <TableCell>API key</TableCell>
               <TableCell>Enabled</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
@@ -303,7 +286,6 @@ export default function AdminProviders({ loaderData, actionData }: Route.Compone
                     {p.modelIds.length} model{p.modelIds.length === 1 ? "" : "s"}
                   </Typography>
                 </TableCell>
-                <TableCell>{p.hasApiKey ? "set" : "—"}</TableCell>
                 <TableCell>
                   <Form method="post">
                     <input type="hidden" name="intent" value="toggle-enabled" />

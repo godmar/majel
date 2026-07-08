@@ -22,27 +22,27 @@ export async function providerForModel(model: string): Promise<Provider> {
 }
 
 /**
- * API keys are per user: the requesting user's key wins; the provider's
- * default key (if set) covers API-triggered tasks and users without one.
+ * API keys are strictly per user — there is no shared key. Every task runs
+ * on behalf of a user, with that user's key.
  */
 export async function resolveApiKey(
   provider: Provider,
   userId?: number | null,
 ): Promise<string> {
-  if (userId != null) {
-    const row = await db.query.userProviderKeys.findFirst({
-      where: and(
-        eq(userProviderKeys.userId, userId),
-        eq(userProviderKeys.providerId, provider.id),
-      ),
-    });
-    if (row?.apiKey) return row.apiKey;
+  if (userId == null) {
+    throw new Error(
+      `Tasks must run on behalf of a user (API keys are per user); external triggers must specify "user".`,
+    );
   }
-  if (provider.apiKey) return provider.apiKey;
+  const row = await db.query.userProviderKeys.findFirst({
+    where: and(
+      eq(userProviderKeys.userId, userId),
+      eq(userProviderKeys.providerId, provider.id),
+    ),
+  });
+  if (row?.apiKey) return row.apiKey;
   throw new Error(
-    userId != null
-      ? `No API key for provider "${provider.name}" — add yours under "API Keys" and try again.`
-      : `Provider "${provider.name}" has no default API key configured.`,
+    `No API key for provider "${provider.name}" — add yours under "API Keys" and try again.`,
   );
 }
 

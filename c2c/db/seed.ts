@@ -49,6 +49,7 @@ function loadMasterConfig(): { config: MasterConfig; dir: string } | null {
 async function main() {
   const master = loadMasterConfig();
 
+  // Providers carry no API key — keys are per user, entered in the UI.
   if (master?.config.provider) {
     for (const [name, p] of Object.entries(master.config.provider)) {
       const models: ProviderModel[] = Object.entries(p.models ?? {}).map(([id, m]) => ({
@@ -62,7 +63,6 @@ async function main() {
         displayName: p.name ?? name,
         npm: p.npm ?? "@ai-sdk/openai-compatible",
         baseUrl: p.options?.baseURL ?? env.LLM_API_BASE_URL,
-        apiKey: p.options?.apiKey ?? env.LLM_API_KEY,
         models,
       };
       await db
@@ -71,14 +71,13 @@ async function main() {
         .onConflictDoUpdate({ target: providers.name, set: values });
       console.log(`provider: ${name} (${models.length} models)`);
     }
-  } else if (env.LLM_API_BASE_URL && env.LLM_API_KEY) {
+  } else if (env.LLM_API_BASE_URL) {
     await db
       .insert(providers)
       .values({
         name: "vt-openwebui",
         displayName: "VT Open WebUI",
         baseUrl: env.LLM_API_BASE_URL,
-        apiKey: env.LLM_API_KEY,
         models: [],
       })
       .onConflictDoNothing();

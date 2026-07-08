@@ -15,6 +15,13 @@
       "when": 1783533344898,
       "tag": "0001_user-provider-keys",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783534253498,
+      "tag": "0002_per-user-keys-only",
+      "breakpoints": true
     }
   ]
 }
