@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: c2c
+  namespace: vtlib
+  labels:
+    app: c2c
+spec:
+  replicas: 1 # in-process reconciler assumes a single instance
+  selector:
+    matchLabels:
+      app: c2c
+  template:
+    metadata:
+      labels:
+        app: c2c
+    spec:
+      imagePullSecrets:
+        - name: registry-secret
+      containers:
+        - name: c2c
+          image: container.cs.vt.edu/gback/registry/agent-supervisor:latest
+          imagePullPolicy: Always
+          envFrom:
+            - secretRef:
+                name: c2c-env
+          env:
+            - name: KUBECONFIG
+              value: /etc/kubeconfig/config
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: kubeconfig
+              mountPath: /etc/kubeconfig
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+      volumes:
+        - name: kubeconfig
+          secret:
+            secretName: c2c-kubeconfig
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: c2c
+  namespace: vtlib
+spec:
+  selector:
+    app: c2c
+  ports:
+    - port: 3000
+      targetPort: 3000

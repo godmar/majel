@@ -18,5 +18,9 @@ FROM node:24-alpine
 COPY ./package.json package-lock.json /app/
 COPY --from=production-dependencies-env /app/node_modules /app/node_modules
 COPY --from=build-env /app/build /app/build
+# SQL migrations are applied at startup (db.server.ts) from db/migrations.
+COPY ./db /app/db
 WORKDIR /app
+ENV NODE_ENV=production PORT=3000
+EXPOSE 3000
 CMD ["npm", "run", "start"]
