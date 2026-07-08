@@ -1,7 +1,11 @@
 # Sandbox image for opencode agents. One image serves every agent; all
 # per-task behavior (model, prompt, MCP servers, permissions) is injected via
 # a mounted opencode config and environment variables.
-FROM node:22-bookworm
+#
+# Kept lean deliberately: image size dominates cold-start time (first pull on
+# a node), which is the bulk of task latency. Layers are ordered stable-first
+# so version bumps only re-pull the small top layers.
+FROM node:22-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv \
@@ -12,14 +16,21 @@ RUN pip3 install --no-cache-dir --break-system-packages \
     pandas numpy requests matplotlib openpyxl
 
 # Pin the opencode version: the runner depends on its server API.
-RUN npm install -g opencode-ai@1.17.15
+RUN npm install -g opencode-ai@1.17.15 && npm cache clean --force
 
 RUN useradd -m -u 1001 agent && mkdir -p /workspace && chown agent:agent /workspace
 
+# Warm opencode's first-run initialization (cache dir, tool binaries) so pods
+# skip it. Runs as the same user and HOME the pod will use.
+USER agent
+ENV HOME=/home/agent
+RUN opencode serve --hostname 127.0.0.1 --port 4600 & \
+    for i in $(seq 1 30); do \
+      curl -sf http://127.0.0.1:4600/global/health >/dev/null && break; sleep 1; \
+    done; kill %1 2>/dev/null; true
+
 COPY runner/ /opt/runner/
 
-USER agent
 WORKDIR /workspace
-ENV HOME=/home/agent
 
 ENTRYPOINT ["node", "/opt/runner/runner.mjs"]
