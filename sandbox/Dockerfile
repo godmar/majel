@@ -15,8 +15,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip3 install --no-cache-dir --break-system-packages \
     pandas numpy requests matplotlib openpyxl
 
-# Pin the opencode version: the runner depends on its server API.
-RUN npm install -g opencode-ai@1.17.15 && npm cache clean --force
+# The runner depends on opencode's server API; update via
+# sandbox/update-opencode.sh, which smoke-tests the new version before push.
+ARG OPENCODE_VERSION=1.17.15
+RUN npm install -g opencode-ai@${OPENCODE_VERSION} && npm cache clean --force
 
 RUN useradd -m -u 1001 agent && mkdir -p /workspace && chown agent:agent /workspace
 

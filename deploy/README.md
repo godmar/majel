@@ -57,6 +57,24 @@ initial provider/MCP/agent config either through the admin UI or by running
 `npm run db:seed` locally with `DATABASE_URL` pointed at the cluster DB
 (e.g. via `kubectl port-forward svc/c2c-postgres 5433:5432`).
 
+## Updating opencode
+
+The sandbox pins its opencode version; the runner depends on opencode's
+server API, so new versions must pass the contract smoke test before rollout:
+
+```sh
+sandbox/update-opencode.sh                # build + smoke-test latest release
+sandbox/update-opencode.sh 1.18.2         # ...or a specific version
+sandbox/update-opencode.sh 1.18.2 --deploy  # ...and point the cluster at it
+```
+
+The script builds the image with `--build-arg OPENCODE_VERSION`, runs
+`sandbox/test/smoke.sh` (self-contained: fake LLM + mock C2C verify events,
+live transcript sync with tool calls, file harvesting, and the final result),
+pushes `<version>` and `latest` tags, and with `--deploy` patches
+`SANDBOX_CONTAINER_IMAGE` in the `c2c-env` secret and restarts the C2C.
+Roll back by `--deploy`ing the previous version tag.
+
 ## Update / redeploy
 
 ```sh
