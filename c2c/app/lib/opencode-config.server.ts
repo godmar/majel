@@ -52,9 +52,11 @@ export async function renderOpencodeConfig(
   for (const m of provider.models) {
     models[m.id] = {
       name: m.name,
-      ...(m.contextLimit || m.outputLimit
-        ? { limit: { context: m.contextLimit, output: m.outputLimit } }
-        : {}),
+      // opencode requires context/output limits on every model.
+      limit: {
+        context: m.contextLimit ?? 131072,
+        output: m.outputLimit ?? 16384,
+      },
     };
   }
 

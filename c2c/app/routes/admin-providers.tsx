@@ -1,6 +1,12 @@
+import * as React from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogTitle from "@mui/material/DialogTitle";
+import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import Switch from "@mui/material/Switch";
@@ -11,8 +17,10 @@ import TableContainer from "@mui/material/TableContainer";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
 import TextField from "@mui/material/TextField";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
+import EditIcon from "@mui/icons-material/Edit";
 import { asc, eq } from "drizzle-orm";
 import { Form, useNavigation } from "react-router";
 import { z } from "zod";
@@ -20,6 +28,42 @@ import type { Route } from "./+types/admin-providers";
 import { requireAdmin } from "~/lib/auth.server";
 import { db } from "~/lib/db.server";
 import { providers, type ProviderModel } from "~/lib/schema.server";
+
+// opencode requires context/output limits for every model; these defaults
+// apply when a line omits them.
+const DEFAULT_CONTEXT_LIMIT = 131072;
+const DEFAULT_OUTPUT_LIMIT = 16384;
+
+const MODELS_FORMAT = 'one model per line: "model-id | Display Name | context-limit | output-limit"';
+
+/**
+ * Parse the models textarea. Limits are mandatory in the rendered opencode
+ * config, so missing/invalid numbers fall back to the defaults.
+ */
+function parseModels(text: string): ProviderModel[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [id, name, context, output] = line.split("|").map((s) => s.trim());
+      return {
+        id,
+        name: name || id,
+        contextLimit: Number(context) > 0 ? Number(context) : DEFAULT_CONTEXT_LIMIT,
+        outputLimit: Number(output) > 0 ? Number(output) : DEFAULT_OUTPUT_LIMIT,
+      };
+    });
+}
+
+function modelsToText(models: ProviderModel[]): string {
+  return models
+    .map(
+      (m) =>
+        `${m.id} | ${m.name} | ${m.contextLimit ?? DEFAULT_CONTEXT_LIMIT} | ${m.outputLimit ?? DEFAULT_OUTPUT_LIMIT}`,
+    )
+    .join("\n");
+}
 
 export async function loader({ request }: Route.LoaderArgs) {
   await requireAdmin(request);
@@ -32,6 +76,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       baseUrl: p.baseUrl,
       npm: p.npm,
       modelIds: p.models.map((m) => m.id),
+      modelsText: modelsToText(p.models),
       enabled: p.enabled,
       hasApiKey: p.apiKey.length > 0,
     })),
@@ -45,18 +90,6 @@ const upsertSchema = z.object({
   apiKey: z.string().default(""),
   models: z.string().trim().default(""),
 });
-
-/** Models are entered one per line as "id" or "id | Display Name". */
-function parseModels(text: string): ProviderModel[] {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const [id, name] = line.split("|").map((s) => s.trim());
-      return { id, name: name || id, contextLimit: 131072, outputLimit: 16384 };
-    });
-}
 
 export async function action({ request }: Route.ActionArgs) {
   await requireAdmin(request);
@@ -92,6 +125,37 @@ export async function action({ request }: Route.ActionArgs) {
   const id = Number(form.get("id"));
   if (!Number.isInteger(id)) return { error: "Invalid provider" };
 
+  if (intent === "update") {
+    const parsed = upsertSchema.safeParse({
+      name: form.get("name"),
+      displayName: form.get("displayName"),
+      baseUrl: form.get("baseUrl"),
+      apiKey: form.get("apiKey"),
+      models: form.get("models") ?? "",
+    });
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    const d = parsed.data;
+    try {
+      await db
+        .update(providers)
+        .set({
+          name: d.name,
+          displayName: d.displayName || d.name,
+          baseUrl: d.baseUrl,
+          models: parseModels(d.models),
+          // Blank API key in the form means "keep the current key".
+          ...(d.apiKey ? { apiKey: d.apiKey } : {}),
+          updatedAt: new Date(),
+        })
+        .where(eq(providers.id, id));
+    } catch {
+      return { error: `A provider named "${d.name}" already exists.` };
+    }
+    return { ok: true };
+  }
+
   if (intent === "toggle-enabled") {
     await db
       .update(providers)
@@ -102,9 +166,80 @@ export async function action({ request }: Route.ActionArgs) {
   return { error: "Unknown action" };
 }
 
+interface EditableProvider {
+  id: number;
+  name: string;
+  displayName: string | null;
+  baseUrl: string;
+  modelsText: string;
+  hasApiKey: boolean;
+}
+
+function EditProviderDialog({
+  provider,
+  onClose,
+  busy,
+}: {
+  provider: EditableProvider | null;
+  onClose: () => void;
+  busy: boolean;
+}) {
+  return (
+    <Dialog open={Boolean(provider)} onClose={onClose} fullWidth maxWidth="md">
+      {provider && (
+        <Form method="post" onSubmit={onClose}>
+          <input type="hidden" name="intent" value="update" />
+          <input type="hidden" name="id" value={provider.id} />
+          <DialogTitle>Edit provider</DialogTitle>
+          <DialogContent>
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+                <TextField name="name" label="Name (id)" size="small" required defaultValue={provider.name} fullWidth />
+                <TextField
+                  name="displayName"
+                  label="Display name"
+                  size="small"
+                  defaultValue={provider.displayName ?? ""}
+                  fullWidth
+                />
+              </Stack>
+              <TextField name="baseUrl" label="Base URL" size="small" required defaultValue={provider.baseUrl} />
+              <TextField
+                name="apiKey"
+                label={provider.hasApiKey ? "API key (leave blank to keep current)" : "API key"}
+                size="small"
+                type="password"
+                autoComplete="new-password"
+              />
+              <TextField
+                name="models"
+                label={`Models (${MODELS_FORMAT})`}
+                size="small"
+                multiline
+                minRows={4}
+                defaultValue={provider.modelsText}
+                slotProps={{ input: { sx: { fontFamily: "monospace", fontSize: "0.85rem" } } }}
+              />
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={onClose} color="inherit">
+              Cancel
+            </Button>
+            <Button type="submit" variant="contained" disabled={busy}>
+              Save
+            </Button>
+          </DialogActions>
+        </Form>
+      )}
+    </Dialog>
+  );
+}
+
 export default function AdminProviders({ loaderData, actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
+  const [editing, setEditing] = React.useState<EditableProvider | null>(null);
 
   return (
     <>
@@ -125,7 +260,7 @@ export default function AdminProviders({ loaderData, actionData }: Route.Compone
               <TextField name="apiKey" label="API key" size="small" type="password" fullWidth />
               <TextField
                 name="models"
-                label='Models (one per line: "model-id | Display Name")'
+                label={`Models (${MODELS_FORMAT})`}
                 size="small"
                 multiline
                 minRows={2}
@@ -155,6 +290,7 @@ export default function AdminProviders({ loaderData, actionData }: Route.Compone
               <TableCell>Models</TableCell>
               <TableCell>API key</TableCell>
               <TableCell>Enabled</TableCell>
+              <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -182,11 +318,20 @@ export default function AdminProviders({ loaderData, actionData }: Route.Compone
                     />
                   </Form>
                 </TableCell>
+                <TableCell align="right">
+                  <Tooltip title="Edit">
+                    <IconButton size="small" disabled={busy} onClick={() => setEditing(p)}>
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </TableContainer>
+
+      <EditProviderDialog provider={editing} onClose={() => setEditing(null)} busy={busy} />
     </>
   );
 }
