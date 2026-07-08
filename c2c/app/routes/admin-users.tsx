@@ -17,6 +17,7 @@ import { asc, eq } from "drizzle-orm";
 import { Form, useNavigation } from "react-router";
 import { z } from "zod";
 import type { Route } from "./+types/admin-users";
+import DateTime from "~/components/DateTime";
 import { requireAdmin } from "~/lib/auth.server";
 import { db } from "~/lib/db.server";
 import { users } from "~/lib/schema.server";
@@ -155,7 +156,7 @@ export default function AdminUsers({ loaderData, actionData }: Route.ComponentPr
                   </Form>
                 </TableCell>
                 <TableCell>
-                  {u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString() : "never"}
+                  <DateTime value={u.lastLoginAt} />
                 </TableCell>
               </TableRow>
             ))}

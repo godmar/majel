@@ -12,6 +12,7 @@ import AddIcon from "@mui/icons-material/Add";
 import { desc, eq } from "drizzle-orm";
 import { Link, useNavigate } from "react-router";
 import type { Route } from "./+types/task-list";
+import DateTime from "~/components/DateTime";
 import TaskStatusChip from "~/components/TaskStatusChip";
 import { requireUser } from "~/lib/auth.server";
 import { db } from "~/lib/db.server";
@@ -107,7 +108,7 @@ export default function TaskList({ loaderData }: Route.ComponentProps) {
                     <TableCell sx={{ whiteSpace: "nowrap" }}>{row.username ?? "—"}</TableCell>
                   )}
                   <TableCell sx={{ whiteSpace: "nowrap" }}>
-                    {new Date(row.createdAt).toLocaleString()}
+                    <DateTime value={row.createdAt} />
                   </TableCell>
                 </TableRow>
               ))}

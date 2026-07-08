@@ -30,8 +30,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Links />
       </head>
       <body>
-        <InitColorSchemeScript attribute="data" />
-        <ThemeProvider theme={theme} defaultMode="light">
+        <InitColorSchemeScript attribute="data" defaultMode="system" />
+        <ThemeProvider theme={theme} defaultMode="system">
           <CssBaseline />
           {children}
         </ThemeProvider>

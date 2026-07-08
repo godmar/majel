@@ -1,6 +1,11 @@
+import * as React from "react";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
+import Dialog from "@mui/material/Dialog";
+import DialogActions from "@mui/material/DialogActions";
+import DialogContent from "@mui/material/DialogContent";
+import DialogTitle from "@mui/material/DialogTitle";
 import IconButton from "@mui/material/IconButton";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
@@ -16,6 +21,7 @@ import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
+import EditIcon from "@mui/icons-material/Edit";
 import { asc, eq } from "drizzle-orm";
 import { Form, useNavigation } from "react-router";
 import { z } from "zod";
@@ -23,6 +29,12 @@ import type { Route } from "./+types/admin-mcp-servers";
 import { requireAdmin } from "~/lib/auth.server";
 import { db } from "~/lib/db.server";
 import { mcpServers } from "~/lib/schema.server";
+
+function headersToText(headers: Record<string, string> | null): string {
+  return Object.entries(headers ?? {})
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("\n");
+}
 
 export async function loader({ request }: Route.LoaderArgs) {
   await requireAdmin(request);
@@ -34,6 +46,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       url: s.url,
       enabled: s.enabled,
       headerNames: Object.keys(s.headers ?? {}),
+      headersText: headersToText(s.headers),
     })),
   };
 }
@@ -89,6 +102,35 @@ export async function action({ request }: Route.ActionArgs) {
   const id = Number(form.get("id"));
   if (!Number.isInteger(id)) return { error: "Invalid server" };
 
+  if (intent === "update") {
+    const parsed = addSchema.safeParse({
+      name: form.get("name"),
+      url: form.get("url"),
+      headers: form.get("headers") ?? "",
+    });
+    if (!parsed.success) {
+      return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+    }
+    const headers = parseHeaders(parsed.data.headers);
+    if (headers === null) {
+      return { error: 'Headers must be one "Name: value" pair per line.' };
+    }
+    try {
+      await db
+        .update(mcpServers)
+        .set({
+          name: parsed.data.name,
+          url: parsed.data.url,
+          headers: Object.keys(headers).length > 0 ? headers : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(mcpServers.id, id));
+    } catch {
+      return { error: `An MCP server named "${parsed.data.name}" already exists.` };
+    }
+    return { ok: true };
+  }
+
   if (intent === "toggle-enabled") {
     await db
       .update(mcpServers)
@@ -103,9 +145,61 @@ export async function action({ request }: Route.ActionArgs) {
   return { error: "Unknown action" };
 }
 
+interface EditableServer {
+  id: number;
+  name: string;
+  url: string;
+  headersText: string;
+}
+
+function EditServerDialog({
+  server,
+  onClose,
+  busy,
+}: {
+  server: EditableServer | null;
+  onClose: () => void;
+  busy: boolean;
+}) {
+  return (
+    <Dialog open={Boolean(server)} onClose={onClose} fullWidth maxWidth="sm">
+      {server && (
+        <Form method="post" onSubmit={onClose}>
+          <input type="hidden" name="intent" value="update" />
+          <input type="hidden" name="id" value={server.id} />
+          <DialogTitle>Edit MCP server</DialogTitle>
+          <DialogContent>
+            <Stack spacing={2} sx={{ mt: 1 }}>
+              <TextField name="name" label="Name" size="small" required defaultValue={server.name} />
+              <TextField name="url" label="URL" size="small" required defaultValue={server.url} />
+              <TextField
+                name="headers"
+                label='HTTP headers (one "Name: value" per line)'
+                size="small"
+                multiline
+                minRows={3}
+                defaultValue={server.headersText}
+              />
+            </Stack>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={onClose} color="inherit">
+              Cancel
+            </Button>
+            <Button type="submit" variant="contained" disabled={busy}>
+              Save
+            </Button>
+          </DialogActions>
+        </Form>
+      )}
+    </Dialog>
+  );
+}
+
 export default function AdminMcpServers({ loaderData, actionData }: Route.ComponentProps) {
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
+  const [editing, setEditing] = React.useState<EditableServer | null>(null);
 
   return (
     <>
@@ -174,7 +268,12 @@ export default function AdminMcpServers({ loaderData, actionData }: Route.Compon
                     />
                   </Form>
                 </TableCell>
-                <TableCell align="right">
+                <TableCell align="right" sx={{ whiteSpace: "nowrap" }}>
+                  <Tooltip title="Edit">
+                    <IconButton size="small" disabled={busy} onClick={() => setEditing(s)}>
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                   <Form
                     method="post"
                     style={{ display: "inline" }}
@@ -196,6 +295,8 @@ export default function AdminMcpServers({ loaderData, actionData }: Route.Compon
           </TableBody>
         </Table>
       </TableContainer>
+
+      <EditServerDialog server={editing} onClose={() => setEditing(null)} busy={busy} />
     </>
   );
 }

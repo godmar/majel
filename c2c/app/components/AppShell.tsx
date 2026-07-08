@@ -37,11 +37,15 @@ interface ShellUser {
 }
 
 function ColorModeToggle() {
-  const { mode, setMode } = useColorScheme();
-  const dark = mode === "dark";
+  const { mode, systemMode, setMode } = useColorScheme();
+  const dark = (mode === "system" ? systemMode : mode) === "dark";
   return (
     <Tooltip title={dark ? "Switch to light mode" : "Switch to dark mode"}>
-      <IconButton color="inherit" onClick={() => setMode(dark ? "light" : "dark")}>
+      <IconButton
+        color="inherit"
+        onClick={() => setMode(dark ? "light" : "dark")}
+        aria-label="toggle color scheme"
+      >
         {dark ? <Brightness7Icon /> : <Brightness4Icon />}
       </IconButton>
     </Tooltip>

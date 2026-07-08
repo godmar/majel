@@ -23,6 +23,7 @@ import { asc, eq } from "drizzle-orm";
 import { Form, useRevalidator } from "react-router";
 import type { Route } from "./+types/task-detail";
 import ActivityTimeline from "~/components/ActivityTimeline";
+import DateTime from "~/components/DateTime";
 import MarkdownView from "~/components/MarkdownView";
 import TaskStatusChip from "~/components/TaskStatusChip";
 import { requireUser } from "~/lib/auth.server";
@@ -149,7 +150,7 @@ export default function TaskDetail({ loaderData }: Route.ComponentProps) {
         <Chip size="small" variant="outlined" label={agentName} />
         <Chip size="small" variant="outlined" label={task.model} />
         {duration !== null && duration !== undefined && (
-          <Typography variant="body2" color="text.secondary">
+          <Typography variant="body2" color="text.secondary" suppressHydrationWarning>
             {duration}s
           </Typography>
         )}
@@ -224,7 +225,11 @@ export default function TaskDetail({ loaderData }: Route.ComponentProps) {
                 </ListItemIcon>
                 <ListItemText
                   primary={e.message ?? e.type}
-                  secondary={`${e.type} — ${new Date(e.ts).toLocaleString()}`}
+                  secondary={
+                    <>
+                      {e.type} — <DateTime value={e.ts} />
+                    </>
+                  }
                 />
               </ListItem>
             ))}
