@@ -4,6 +4,9 @@ import createEmotionServer from "@emotion/server/create-instance";
 import { renderToString } from "react-dom/server";
 import type { EntryContext } from "react-router";
 import { ServerRouter } from "react-router";
+import { startReconciler } from "~/lib/reconciler.server";
+
+startReconciler();
 
 export default function handleRequest(
   request: Request,
