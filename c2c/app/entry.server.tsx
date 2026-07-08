@@ -15,9 +15,16 @@ import { ServerRouter } from "react-router";
 import { createReadableStreamFromReadable } from "@react-router/node";
 
 import createEmotionCache from "./createCache";
+import { ensureAdminAccounts } from "~/lib/auth.server";
 import { startReconciler } from "~/lib/reconciler.server";
 
 startReconciler();
+declare global {
+  var __adminsEnsured: Promise<void> | undefined;
+}
+globalThis.__adminsEnsured ??= ensureAdminAccounts().catch((err) =>
+  console.error("failed to ensure admin accounts:", err),
+);
 
 export const streamTimeout = 5_000;
 

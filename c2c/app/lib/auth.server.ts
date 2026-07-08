@@ -80,6 +80,26 @@ export async function recordLogin(userId: number): Promise<void> {
 }
 
 /**
+ * Provision every ADMIN_ACCOUNTS username as an enabled admin. Runs at
+ * server startup so admins exist (and can manage users) before their own
+ * first login; resolveAccount() additionally re-promotes at login time.
+ */
+export async function ensureAdminAccounts(): Promise<void> {
+  for (const username of adminAccounts) {
+    await db
+      .insert(users)
+      .values({ username, role: "admin" })
+      .onConflictDoUpdate({
+        target: users.username,
+        set: { role: "admin", enabled: true },
+      });
+  }
+  if (adminAccounts.length > 0) {
+    console.error(`admin accounts ensured: ${adminAccounts.join(", ")}`);
+  }
+}
+
+/**
  * Dev-only CAS bypass: log in as DEV_FAKE_USER, creating the account if
  * needed. Never active in production builds.
  */
