@@ -35,6 +35,17 @@ export function jobNameForTask(taskId: string): string {
   return `agent-task-${taskId.slice(0, 8)}`;
 }
 
+/** Parse SANDBOX_NODE_SELECTOR ("key=value,key2=value2") into a selector map. */
+function nodeSelector(): Record<string, string> | undefined {
+  if (!env.SANDBOX_NODE_SELECTOR) return undefined;
+  const selector: Record<string, string> = {};
+  for (const pair of env.SANDBOX_NODE_SELECTOR.split(",")) {
+    const [key, value] = pair.split("=").map((s) => s.trim());
+    if (key && value) selector[key] = value;
+  }
+  return Object.keys(selector).length > 0 ? selector : undefined;
+}
+
 /**
  * Launch the sandbox Job for a task: a per-task Secret carries the rendered
  * opencode config and the callback token; the Job mounts it and runs the
@@ -86,6 +97,7 @@ export async function launchTask(taskId: string): Promise<void> {
           metadata: { labels: { app: "opencode-agent", "task-id": taskId } },
           spec: {
             restartPolicy: "Never",
+            nodeSelector: nodeSelector(),
             imagePullSecrets: [{ name: IMAGE_PULL_SECRET }],
             containers: [
               {

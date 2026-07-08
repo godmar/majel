@@ -26,6 +26,8 @@ const schema = z.object({
   KUBECONFIG: z.string().optional(),
   K8S_NAMESPACE: z.string().default("vtlib"),
   SANDBOX_CONTAINER_IMAGE: z.string().default(""),
+  // Optional placement constraint for agent pods: "key=value,key2=value2".
+  SANDBOX_NODE_SELECTOR: z.string().default(""),
 
   LLM_API_BASE_URL: z.string().default(""),
   LLM_API_KEY: z.string().default(""),

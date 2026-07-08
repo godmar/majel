@@ -11,7 +11,7 @@ import TableRow from "@mui/material/TableRow";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
 import { asc, eq, sql } from "drizzle-orm";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import type { Route } from "./+types/admin-agents";
 import { requireAdmin } from "~/lib/auth.server";
 import { db } from "~/lib/db.server";
@@ -35,6 +35,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export default function AdminAgents({ loaderData }: Route.ComponentProps) {
+  const navigate = useNavigate();
   return (
     <>
       <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 2 }}>
@@ -60,12 +61,16 @@ export default function AdminAgents({ loaderData }: Route.ComponentProps) {
               <TableRow
                 key={a.id}
                 hover
-                component={Link}
-                to={`/admin/agents/${a.id}`}
-                sx={{ textDecoration: "none", cursor: "pointer" }}
+                onClick={() => navigate(`/admin/agents/${a.id}`)}
+                sx={{ cursor: "pointer" }}
               >
-                <TableCell>{a.name}</TableCell>
-                <TableCell>{a.description}</TableCell>
+                <TableCell sx={{ whiteSpace: "nowrap" }}>{a.name}</TableCell>
+                <TableCell
+                  title={a.description ?? ""}
+                  sx={{ maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                >
+                  {a.description}
+                </TableCell>
                 <TableCell>{a.model}</TableCell>
                 <TableCell>{a.mcpCount}</TableCell>
                 <TableCell>{a.timeoutSeconds}s</TableCell>

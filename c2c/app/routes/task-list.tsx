@@ -10,7 +10,7 @@ import TableRow from "@mui/material/TableRow";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
 import { desc, eq } from "drizzle-orm";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import type { Route } from "./+types/task-list";
 import TaskStatusChip from "~/components/TaskStatusChip";
 import { requireUser } from "~/lib/auth.server";
@@ -41,13 +41,14 @@ export async function loader({ request }: Route.LoaderArgs) {
   return { rows, isAdmin };
 }
 
-function excerpt(text: string, max = 80): string {
-  const oneLine = text.replace(/\s+/g, " ").trim();
-  return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
+function oneLine(text: string, max: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
 }
 
 export default function TaskList({ loaderData }: Route.ComponentProps) {
   const { rows, isAdmin } = loaderData;
+  const navigate = useNavigate();
 
   return (
     <>
@@ -74,7 +75,7 @@ export default function TaskList({ loaderData }: Route.ComponentProps) {
               <TableRow>
                 <TableCell>Status</TableCell>
                 <TableCell>Agent</TableCell>
-                <TableCell sx={{ width: "40%" }}>Prompt</TableCell>
+                <TableCell>Prompt</TableCell>
                 {isAdmin && <TableCell>User</TableCell>}
                 <TableCell>Created</TableCell>
               </TableRow>
@@ -84,17 +85,30 @@ export default function TaskList({ loaderData }: Route.ComponentProps) {
                 <TableRow
                   key={row.id}
                   hover
-                  component={Link}
-                  to={`/tasks/${row.id}`}
-                  sx={{ textDecoration: "none", cursor: "pointer" }}
+                  onClick={() => navigate(`/tasks/${row.id}`)}
+                  sx={{ cursor: "pointer" }}
                 >
-                  <TableCell>
+                  <TableCell sx={{ whiteSpace: "nowrap" }}>
                     <TaskStatusChip status={row.status} />
                   </TableCell>
-                  <TableCell>{row.agentName}</TableCell>
-                  <TableCell>{excerpt(row.prompt)}</TableCell>
-                  {isAdmin && <TableCell>{row.username ?? "—"}</TableCell>}
-                  <TableCell>{new Date(row.createdAt).toLocaleString()}</TableCell>
+                  <TableCell sx={{ whiteSpace: "nowrap" }}>{row.agentName}</TableCell>
+                  <TableCell
+                    title={oneLine(row.prompt, 1000)}
+                    sx={{
+                      maxWidth: 360,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {oneLine(row.prompt, 300)}
+                  </TableCell>
+                  {isAdmin && (
+                    <TableCell sx={{ whiteSpace: "nowrap" }}>{row.username ?? "—"}</TableCell>
+                  )}
+                  <TableCell sx={{ whiteSpace: "nowrap" }}>
+                    {new Date(row.createdAt).toLocaleString()}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
