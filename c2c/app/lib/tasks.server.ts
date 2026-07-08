@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "./db.server";
 import { saveTaskFile } from "./files.server";
+import { providerForModel, resolveApiKey } from "./opencode-config.server";
 import { agentDefinitions, taskEvents, tasks, type Task } from "./schema.server";
 
 export interface CreateTaskInput {
@@ -23,6 +24,11 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
   if (!agent || !agent.enabled) {
     throw new Error("Unknown or disabled agent");
   }
+
+  // Fail fast if no usable API key exists, so the submitter sees the error
+  // immediately instead of a failed task.
+  const provider = await providerForModel(input.modelOverride ?? agent.model);
+  await resolveApiKey(provider, input.createdBy);
 
   const [task] = await db
     .insert(tasks)

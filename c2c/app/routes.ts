@@ -23,6 +23,7 @@ export default [
 
   layout("routes/app-layout.tsx", [
     index("routes/task-list.tsx"),
+    route("settings", "routes/settings.tsx"),
     route("tasks/new", "routes/task-new.tsx"),
     route("tasks/:taskId", "routes/task-detail.tsx"),
     route("admin/users", "routes/admin-users.tsx"),

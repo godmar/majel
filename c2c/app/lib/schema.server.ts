@@ -60,6 +60,23 @@ export const providers = pgTable("providers", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// LLM API keys are per person: the same provider is reached with the
+// requesting user's own credential.
+export const userProviderKeys = pgTable(
+  "user_provider_keys",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    providerId: integer("provider_id")
+      .notNull()
+      .references(() => providers.id, { onDelete: "cascade" }),
+    apiKey: text("api_key").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.providerId] })],
+);
+
 export const agentDefinitions = pgTable("agent_definitions", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().unique(),

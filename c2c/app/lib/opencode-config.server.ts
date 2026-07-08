@@ -1,31 +1,65 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "./db.server";
 import {
   agentMcpServers,
   mcpServers,
   providers,
+  userProviderKeys,
   type AgentDefinition,
+  type Provider,
 } from "./schema.server";
 
-/**
- * Render the opencode.json for one task from an agent definition, its
- * allowed MCP servers, and the provider referenced by the model string
- * ("<provider>/<modelID>"). The result is mounted into the sandbox pod and
- * pointed to by OPENCODE_CONFIG.
- */
-export async function renderOpencodeConfig(
-  agent: AgentDefinition,
-  modelOverride?: string | null,
-): Promise<Record<string, unknown>> {
-  const model = modelOverride ?? agent.model;
+/** Provider referenced by a "<provider>/<modelID>" model string. */
+export async function providerForModel(model: string): Promise<Provider> {
   const [providerName] = model.split("/", 1);
-
   const provider = await db.query.providers.findFirst({
     where: eq(providers.name, providerName),
   });
   if (!provider || !provider.enabled) {
     throw new Error(`model "${model}" references unknown or disabled provider "${providerName}"`);
   }
+  return provider;
+}
+
+/**
+ * API keys are per user: the requesting user's key wins; the provider's
+ * default key (if set) covers API-triggered tasks and users without one.
+ */
+export async function resolveApiKey(
+  provider: Provider,
+  userId?: number | null,
+): Promise<string> {
+  if (userId != null) {
+    const row = await db.query.userProviderKeys.findFirst({
+      where: and(
+        eq(userProviderKeys.userId, userId),
+        eq(userProviderKeys.providerId, provider.id),
+      ),
+    });
+    if (row?.apiKey) return row.apiKey;
+  }
+  if (provider.apiKey) return provider.apiKey;
+  throw new Error(
+    userId != null
+      ? `No API key for provider "${provider.name}" — add yours under "API Keys" and try again.`
+      : `Provider "${provider.name}" has no default API key configured.`,
+  );
+}
+
+/**
+ * Render the opencode.json for one task from an agent definition, its
+ * allowed MCP servers, and the provider referenced by the model string
+ * ("<provider>/<modelID>"), using the requesting user's API key. The result
+ * is mounted into the sandbox pod and pointed to by OPENCODE_CONFIG.
+ */
+export async function renderOpencodeConfig(
+  agent: AgentDefinition,
+  modelOverride?: string | null,
+  userId?: number | null,
+): Promise<Record<string, unknown>> {
+  const model = modelOverride ?? agent.model;
+  const provider = await providerForModel(model);
+  const apiKey = await resolveApiKey(provider, userId);
 
   const mcpRows = await db
     .select({
@@ -69,7 +103,7 @@ export async function renderOpencodeConfig(
         name: provider.displayName ?? provider.name,
         npm: provider.npm,
         options: {
-          apiKey: provider.apiKey,
+          apiKey,
           baseURL: provider.baseUrl,
         },
         models,

@@ -20,6 +20,7 @@ import AddCircleOutlineIcon from "@mui/icons-material/AddCircleOutlined";
 import Brightness4Icon from "@mui/icons-material/Brightness4";
 import Brightness7Icon from "@mui/icons-material/Brightness7";
 import DnsIcon from "@mui/icons-material/Dns";
+import KeyIcon from "@mui/icons-material/Key";
 import ListAltIcon from "@mui/icons-material/ListAlt";
 import LogoutIcon from "@mui/icons-material/Logout";
 import MenuIcon from "@mui/icons-material/Menu";
@@ -61,6 +62,7 @@ interface NavItem {
 const userNav: NavItem[] = [
   { label: "Tasks", to: "/", icon: <ListAltIcon /> },
   { label: "New Task", to: "/tasks/new", icon: <AddCircleOutlineIcon /> },
+  { label: "API Keys", to: "/settings", icon: <KeyIcon /> },
 ];
 
 const adminNav: NavItem[] = [

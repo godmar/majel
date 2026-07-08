@@ -63,7 +63,7 @@ export async function launchTask(taskId: string): Promise<void> {
     throw new Error("SANDBOX_CONTAINER_IMAGE is not configured");
   }
 
-  const config = await renderOpencodeConfig(agent, task.modelOverride);
+  const config = await renderOpencodeConfig(agent, task.modelOverride, task.createdBy);
   const jobName = jobNameForTask(taskId);
   const secretName = `${jobName}-config`;
   const ccApiUrl = env.CC_INTERNAL_URL ?? env.CC_BEARER_URL;
