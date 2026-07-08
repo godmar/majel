@@ -1,0 +1,15 @@
+# Secrets — never commit
+.env
+endeavour.yaml
+opencode-master-config/opencode.jsonc
+deploy/secrets.yaml
+
+# Node / build output
+node_modules/
+build/
+.react-router/
+dist/
+
+# Misc
+*.log
+.DS_Store
