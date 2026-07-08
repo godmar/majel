@@ -25,6 +25,7 @@ import LogoutIcon from "@mui/icons-material/Logout";
 import MenuIcon from "@mui/icons-material/Menu";
 import PeopleIcon from "@mui/icons-material/People";
 import SmartToyIcon from "@mui/icons-material/SmartToy";
+import CloudQueueIcon from "@mui/icons-material/CloudQueue";
 import { Form, NavLink, useLocation } from "react-router";
 
 const DRAWER_WIDTH = 240;
@@ -62,6 +63,7 @@ const adminNav: NavItem[] = [
   { label: "Users", to: "/admin/users", icon: <PeopleIcon /> },
   { label: "Agents", to: "/admin/agents", icon: <SmartToyIcon /> },
   { label: "MCP Servers", to: "/admin/mcp-servers", icon: <DnsIcon /> },
+  { label: "Providers", to: "/admin/providers", icon: <CloudQueueIcon /> },
 ];
 
 function NavList({ items, onNavigate }: { items: NavItem[]; onNavigate: () => void }) {

@@ -21,7 +21,8 @@ export const db = (globalThis.__db ??= createDb());
 globalThis.__dbMigrated ??= migrate(db, {
   migrationsFolder: path.resolve(process.cwd(), "db/migrations"),
 }).then(() => {
-  console.log("database migrations applied");
+  // stderr so CLI tools importing the db (db/render-config.ts) keep clean stdout
+  console.error("database migrations applied");
 });
 
 await globalThis.__dbMigrated;
