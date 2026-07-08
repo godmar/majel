@@ -8,6 +8,14 @@ export default [
   // File downloads render raw bytes, so they live outside the app layout.
   route("tasks/:taskId/files/:fileId", "routes/task-file-download.ts"),
 
+  // Machine API used by sandbox runners (bearer token auth).
+  route("api/runner/tasks/:taskId/input", "routes/api-runner-input.ts"),
+  route("api/runner/tasks/:taskId/files/:fileId", "routes/api-runner-file.ts"),
+  route("api/runner/tasks/:taskId/events", "routes/api-runner-events.ts"),
+  route("api/runner/tasks/:taskId/transcript", "routes/api-runner-transcript.ts"),
+  route("api/runner/tasks/:taskId/result", "routes/api-runner-result.ts"),
+  route("api/runner/tasks/:taskId/result/files", "routes/api-runner-result-file.ts"),
+
   layout("routes/app-layout.tsx", [
     index("routes/task-list.tsx"),
     route("tasks/new", "routes/task-new.tsx"),
