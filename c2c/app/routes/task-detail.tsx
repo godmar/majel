@@ -20,9 +20,10 @@ import UnarchiveIcon from "@mui/icons-material/Unarchive";
 import CircleIcon from "@mui/icons-material/Circle";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
+import ReplayIcon from "@mui/icons-material/Replay";
 import * as React from "react";
-import { asc, eq } from "drizzle-orm";
-import { Form, useRevalidator } from "react-router";
+import { and, asc, eq } from "drizzle-orm";
+import { Form, redirect, useRevalidator } from "react-router";
 import type { Route } from "./+types/task-detail";
 import ActivityTimeline from "~/components/ActivityTimeline";
 import DateTime from "~/components/DateTime";
@@ -31,8 +32,8 @@ import TaskStatusChip from "~/components/TaskStatusChip";
 import { requireUser } from "~/lib/auth.server";
 import { db } from "~/lib/db.server";
 import { listTaskFiles } from "~/lib/files.server";
-import { agentDefinitions, taskEvents, tasks } from "~/lib/schema.server";
-import { addTaskEvent, isTerminal } from "~/lib/tasks.server";
+import { agentDefinitions, taskEvents, taskFiles, tasks } from "~/lib/schema.server";
+import { addTaskEvent, createTask, isTerminal } from "~/lib/tasks.server";
 
 export async function loader({ request, params }: Route.LoaderArgs) {
   const user = await requireUser(request);
@@ -96,8 +97,33 @@ export async function action({ request, params }: Route.ActionArgs) {
     await db.update(tasks).set({ archivedAt: new Date() }).where(eq(tasks.id, task.id));
   } else if (intent === "unarchive") {
     await db.update(tasks).set({ archivedAt: null }).where(eq(tasks.id, task.id));
+  } else if (intent === "rerun" && isTerminal(task.status)) {
+    // Fresh task with the same prompt/agent/model/inputs. It runs as whoever
+    // clicked (LLM keys are per user), not the original creator.
+    const inputs = await db.query.taskFiles.findMany({
+      where: and(eq(taskFiles.taskId, task.id), eq(taskFiles.kind, "input")),
+    });
+    try {
+      const rerun = await createTask({
+        agentDefinitionId: task.agentDefinitionId,
+        prompt: task.prompt,
+        modelOverride: task.modelOverride,
+        createdBy: user.id,
+        triggerSource: "web",
+        files: inputs.map((f) => ({
+          filename: f.filename,
+          mimeType: f.mimeType,
+          content: f.content,
+        })),
+      });
+      await addTaskEvent(rerun.id, "rerun", `Rerun of task ${task.id} by ${user.username}`);
+      throw redirect(`/tasks/${rerun.id}`);
+    } catch (err) {
+      if (err instanceof Response) throw err;
+      return { error: err instanceof Error ? err.message : "Failed to rerun task" };
+    }
   }
-  return { ok: true };
+  return { error: null };
 }
 
 function formatBytes(n: number): string {
@@ -128,7 +154,7 @@ function FileList({ taskId, files }: { taskId: string; files: { id: number; file
   );
 }
 
-export default function TaskDetail({ loaderData }: Route.ComponentProps) {
+export default function TaskDetail({ loaderData, actionData }: Route.ComponentProps) {
   const { task, agentName, events, inputFiles, outputFiles, terminal } = loaderData;
   const revalidator = useRevalidator();
 
@@ -165,16 +191,24 @@ export default function TaskDetail({ loaderData }: Route.ComponentProps) {
         {task.archived && <Chip size="small" label="Archived" />}
         <Box sx={{ flexGrow: 1 }} />
         {terminal ? (
-          <Form method="post">
-            <input type="hidden" name="intent" value={task.archived ? "unarchive" : "archive"} />
-            <Button
-              type="submit"
-              size="small"
-              startIcon={task.archived ? <UnarchiveIcon /> : <ArchiveIcon />}
-            >
-              {task.archived ? "Unarchive" : "Archive"}
-            </Button>
-          </Form>
+          <>
+            <Form method="post">
+              <input type="hidden" name="intent" value="rerun" />
+              <Button type="submit" size="small" startIcon={<ReplayIcon />}>
+                Rerun
+              </Button>
+            </Form>
+            <Form method="post">
+              <input type="hidden" name="intent" value={task.archived ? "unarchive" : "archive"} />
+              <Button
+                type="submit"
+                size="small"
+                startIcon={task.archived ? <UnarchiveIcon /> : <ArchiveIcon />}
+              >
+                {task.archived ? "Unarchive" : "Archive"}
+              </Button>
+            </Form>
+          </>
         ) : (
           <Form
             method="post"
@@ -205,6 +239,12 @@ export default function TaskDetail({ loaderData }: Route.ComponentProps) {
           </>
         )}
       </Paper>
+
+      {actionData?.error && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {actionData.error}
+        </Alert>
+      )}
 
       {task.error && (
         <Alert severity="error" sx={{ mb: 2 }}>
