@@ -1,0 +1,2 @@
+ALTER TABLE "agent_definitions" ALTER COLUMN "permissions" SET DEFAULT '{"read":"allow","edit":"allow","bash":"allow"}'::jsonb;--> statement-breakpoint
+ALTER TABLE "agent_definitions" ADD COLUMN "auto_approve" boolean DEFAULT false NOT NULL;

@@ -115,6 +115,7 @@ export async function launchTask(taskId: string): Promise<void> {
                   },
                   { name: "OPENCODE_CONFIG", value: "/etc/opencode/config.json" },
                   { name: "TASK_TIMEOUT_SECONDS", value: String(agent.timeoutSeconds) },
+                  { name: "AUTO_APPROVE_PERMISSIONS", value: agent.autoApprove ? "true" : "false" },
                 ],
                 volumeMounts: [{ name: "opencode-config", mountPath: "/etc/opencode", readOnly: true }],
                 resources: {

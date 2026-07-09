@@ -36,6 +36,13 @@
       "when": 1783620296440,
       "tag": "0004_concurrency-limits",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1783624732342,
+      "tag": "0005_agent-auto-approve",
+      "breakpoints": true
     }
   ]
 }

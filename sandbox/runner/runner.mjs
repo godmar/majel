@@ -8,6 +8,8 @@
  *   CC_BEARER_TOKEN  bearer token for the C2C machine API
  *   OPENCODE_CONFIG  path to the rendered opencode.json (mounted secret)
  *   TASK_TIMEOUT_SECONDS  optional wall-clock budget (default 1800)
+ *   AUTO_APPROVE_PERMISSIONS  "true" to auto-approve opencode permission
+ *                    requests, which otherwise hang forever headless
  *
  * Flow: fetch input -> write files -> snapshot workspace -> start
  * `opencode serve` -> create session -> prompt (async) -> live transcript
@@ -27,6 +29,7 @@ const WORKSPACE = process.env.WORKSPACE ?? "/workspace";
 const OC_PORT = Number(process.env.OPENCODE_PORT ?? 4096);
 const OC_URL = `http://127.0.0.1:${OC_PORT}`;
 const TIMEOUT_MS = Number(process.env.TASK_TIMEOUT_SECONDS ?? 1800) * 1000;
+const AUTO_APPROVE = process.env.AUTO_APPROVE_PERMISSIONS === "true";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const SKIP_DIRS = new Set(["node_modules", ".git", ".venv", "__pycache__", ".opencode", ".cache"]);
@@ -150,6 +153,22 @@ async function fetchTranscript(sessionID) {
   return res.json();
 }
 
+/**
+ * Approve pending opencode permission requests ("always", so repeats don't
+ * ask again). Nobody can answer them in a headless pod — an unanswered "ask"
+ * stalls the tool call until the task times out — and the sandbox pod is the
+ * actual security boundary here.
+ */
+async function approvePendingPermissions() {
+  const pending = await (await oc("/permission", { timeoutMs: 5000 })).json();
+  for (const req of pending) {
+    await oc(`/permission/${req.id}/reply`, { method: "POST", json: { reply: "always" } });
+    const what = `${req.permission} ${(req.patterns ?? []).join(", ")}`.trim();
+    console.log(`auto-approved permission request: ${what}`);
+    await postEvent("permission_auto_approved", `Auto-approved permission request: ${what}`);
+  }
+}
+
 function extractResultText(transcript) {
   for (let i = transcript.length - 1; i >= 0; i--) {
     const msg = transcript[i];
@@ -235,11 +254,19 @@ async function main() {
   });
   await postEvent("prompt_sent", "Prompt submitted to agent");
 
-  // 5. Live transcript sync while waiting for completion
+  // 5. Live transcript sync (and permission auto-approval) while waiting
+  // for completion
   let syncing = true;
   const syncLoop = (async () => {
     while (syncing) {
       await sleep(3000);
+      if (AUTO_APPROVE) {
+        try {
+          await approvePendingPermissions();
+        } catch (err) {
+          console.error("permission auto-approval failed:", err.message);
+        }
+      }
       try {
         const transcript = await fetchTranscript(session.id);
         await cc(`/api/runner/tasks/${TASK_ID}/transcript`, {

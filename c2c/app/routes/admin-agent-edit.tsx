@@ -64,8 +64,10 @@ const formSchema = z.object({
   systemPrompt: z.string().trim().min(1, "System prompt is required"),
   model: z.string().trim().min(1, "Model is required"),
   timeoutSeconds: z.coerce.number().int().min(60).max(24 * 3600),
+  permissionRead: z.enum(["allow", "ask", "deny"]),
   permissionEdit: z.enum(["allow", "ask", "deny"]),
   permissionBash: z.enum(["allow", "ask", "deny"]),
+  autoApprove: z.coerce.boolean(),
   enabled: z.coerce.boolean(),
 });
 
@@ -89,8 +91,10 @@ export async function action({ request, params }: Route.ActionArgs) {
     systemPrompt: form.get("systemPrompt"),
     model: form.get("model"),
     timeoutSeconds: form.get("timeoutSeconds"),
+    permissionRead: form.get("permissionRead") ?? "allow",
     permissionEdit: form.get("permissionEdit") ?? "allow",
     permissionBash: form.get("permissionBash") ?? "allow",
+    autoApprove: form.get("autoApprove") === "on",
     enabled: form.get("enabled") === "on",
   });
   if (!parsed.success) {
@@ -103,7 +107,8 @@ export async function action({ request, params }: Route.ActionArgs) {
     systemPrompt: d.systemPrompt,
     model: d.model,
     timeoutSeconds: d.timeoutSeconds,
-    permissions: { edit: d.permissionEdit, bash: d.permissionBash },
+    permissions: { read: d.permissionRead, edit: d.permissionEdit, bash: d.permissionBash },
+    autoApprove: d.autoApprove,
     enabled: d.enabled,
     updatedAt: new Date(),
   };
@@ -134,7 +139,7 @@ export default function AdminAgentEdit({ loaderData, actionData }: Route.Compone
   const { agent, modelOptions, allMcp, selectedMcp } = loaderData;
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
-  const permissions = (agent?.permissions ?? { edit: "allow", bash: "allow" }) as Record<string, string>;
+  const permissions = (agent?.permissions ?? {}) as Record<string, string>;
 
   return (
     <Box sx={{ maxWidth: 900 }}>
@@ -192,6 +197,19 @@ export default function AdminAgentEdit({ loaderData, actionData }: Route.Compone
             </Stack>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <TextField
+                name="permissionRead"
+                label="File read permission"
+                select
+                defaultValue={permissions.read ?? "allow"}
+                fullWidth
+              >
+                {["allow", "ask", "deny"].map((v) => (
+                  <MenuItem key={v} value={v}>
+                    {v}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <TextField
                 name="permissionEdit"
                 label="File edit permission"
                 select
@@ -218,6 +236,10 @@ export default function AdminAgentEdit({ loaderData, actionData }: Route.Compone
                 ))}
               </TextField>
             </Stack>
+            <FormControlLabel
+              control={<Switch name="autoApprove" defaultChecked={agent?.autoApprove ?? false} />}
+              label='Automatically approve all permission requests (YOLO) — without this, any "ask" outcome (including opencode&apos;s built-in guard on secret-looking files) hangs the headless agent until it times out'
+            />
 
             <Box>
               <Typography variant="subtitle2" gutterBottom>

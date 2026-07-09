@@ -90,7 +90,10 @@ export const agentDefinitions = pgTable("agent_definitions", {
   permissions: jsonb("permissions")
     .$type<Record<string, string>>()
     .notNull()
-    .default({ edit: "allow", bash: "allow" }),
+    .default({ read: "allow", edit: "allow", bash: "allow" }),
+  // Runner auto-approves every opencode permission request ("ask" outcomes
+  // hang forever in a headless pod otherwise).
+  autoApprove: boolean("auto_approve").notNull().default(false),
   timeoutSeconds: integer("timeout_seconds").notNull().default(1800),
   enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
