@@ -24,6 +24,7 @@ Deployment manifests are in `deploy/` (namespace `vtlib` on the endeavour cluste
 | `c2c/` | React Router v7 app (UI + machine API), Drizzle ORM, K8s job launcher |
 | `sandbox/` | Sandbox container image + runner script |
 | `deploy/` | Kubernetes manifests and deployment runbook |
+| `docs/` | Machine API reference for external applications |
 | `opencode-master-config/` | Reference opencode configuration (the real `opencode.jsonc` is gitignored — it contains credentials) |
 | `PLAN.md` | Original requirements |
 
@@ -57,9 +58,10 @@ docker build -t $SANDBOX_CONTAINER_IMAGE sandbox/ && docker push $SANDBOX_CONTAI
 
 ## Machine API (external triggers)
 
-Tasks can be created programmatically — the hook for future event-driven
-agents. Authenticate with `CC_BEARER_TOKEN`. LLM API keys are per user, so
-every task runs on behalf of a `user` (their key is used):
+Other applications can create tasks programmatically on behalf of a user
+(bearer-token auth, optional input files, status polling, output file
+download). See **[docs/API.md](docs/API.md)** for the full reference; the
+short version:
 
 ```sh
 curl -X POST https://vtlibai-cc.endeavour.cs.vt.edu/api/tasks \

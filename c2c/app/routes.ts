@@ -12,6 +12,7 @@ export default [
   // Machine API for programmatic/external task creation (bearer token auth).
   route("api/tasks", "routes/api-tasks.ts"),
   route("api/tasks/:taskId", "routes/api-task-detail.ts"),
+  route("api/tasks/:taskId/files/:fileId", "routes/api-task-file.ts"),
 
   // Machine API used by sandbox runners (bearer token auth).
   route("api/runner/tasks/:taskId/input", "routes/api-runner-input.ts"),
