@@ -74,9 +74,11 @@ After changing anything under `opencode-master-config/home/`, run:
 sandbox/redeploy.sh
 ```
 
-That rebuilds and pushes the sandbox image. Agent jobs pull the image fresh on
-every launch, so tasks created after the push see the new files immediately —
-no cluster restart needed. Tasks already running keep the files they started
+That rebuilds and pushes the sandbox image under the tag the cluster actually
+launches (read from the `c2c-env` secret — usually an opencode version pinned
+by `update-opencode.sh --deploy`) as well as `:latest`. Agent jobs pull the
+image fresh on every launch, so tasks created after the push see the new files
+immediately — no cluster restart needed. Tasks already running keep the files they started
 with. (The build stages the directory into gitignored `sandbox/home/`; never
 edit that copy.)
 
