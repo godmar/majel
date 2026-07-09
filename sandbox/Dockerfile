@@ -33,6 +33,13 @@ RUN opencode serve --hostname 127.0.0.1 --port 4600 & \
 
 COPY runner/ /opt/runner/
 
+# Seed of the agent's initial working directory: every agent finds these files
+# (including private reference data — the registry is private) in its cwd at
+# startup. sandbox/home/ is a gitignored staging copy of
+# opencode-master-config/home/, refreshed by sandbox/redeploy.sh — edit the
+# master copy, not the staging copy.
+COPY --chown=agent:agent home/ /workspace/
+
 WORKDIR /workspace
 
 ENTRYPOINT ["node", "/opt/runner/runner.mjs"]

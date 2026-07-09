@@ -32,6 +32,9 @@ fi
 VERSIONED_IMAGE="$REPO:$VERSION"
 LATEST_IMAGE="$REPO:latest"
 
+# Stage the agent's initial working directory (see sandbox/redeploy.sh).
+rsync -a --delete "$ROOT/opencode-master-config/home/" "$DIR/home/"
+
 echo "=== building $VERSIONED_IMAGE"
 docker build --build-arg OPENCODE_VERSION="$VERSION" \
   -t "$VERSIONED_IMAGE" -t "$LATEST_IMAGE" "$DIR"

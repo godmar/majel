@@ -53,8 +53,32 @@ contain credentials and are gitignored. `.env.sample` documents every variable.
 ```sh
 docker login container.cs.vt.edu   # use REGISTRY_USERNAME / REGISTRY_PASSWORD
 docker build -t $CC_CONTAINER_IMAGE c2c/ && docker push $CC_CONTAINER_IMAGE
-docker build -t $SANDBOX_CONTAINER_IMAGE sandbox/ && docker push $SANDBOX_CONTAINER_IMAGE
+sandbox/redeploy.sh                # builds and pushes $SANDBOX_CONTAINER_IMAGE
 ```
+
+To upgrade the opencode version inside the sandbox image, use
+`sandbox/update-opencode.sh` instead — it smoke-tests the new version before
+pushing.
+
+## Agent working directory (`opencode-master-config/home/`)
+
+Every agent starts in `/workspace`, pre-seeded with the contents of
+`opencode-master-config/home/` — reference files (and private data; the
+registry is private) that every task should find in its working directory,
+alongside whatever input files the submitter attaches. The directory is
+gitignored; it is baked into the sandbox image at build time.
+
+After changing anything under `opencode-master-config/home/`, run:
+
+```sh
+sandbox/redeploy.sh
+```
+
+That rebuilds and pushes the sandbox image. Agent jobs pull the image fresh on
+every launch, so tasks created after the push see the new files immediately —
+no cluster restart needed. Tasks already running keep the files they started
+with. (The build stages the directory into gitignored `sandbox/home/`; never
+edit that copy.)
 
 ## Machine API (external triggers)
 

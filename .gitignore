@@ -2,6 +2,8 @@
 .env
 endeavour.yaml
 opencode-master-config/opencode.jsonc
+opencode-master-config/home
+sandbox/home
 deploy/secrets.yaml
 
 # Node / build output
