@@ -11,6 +11,7 @@ import {
   timestamp,
   uuid,
 } from "drizzle-orm/pg-core";
+import type { TaskStatus } from "./task-status";
 
 const bytea = customType<{ data: Buffer }>({
   dataType() {
@@ -106,14 +107,7 @@ export const agentMcpServers = pgTable(
   (t) => [primaryKey({ columns: [t.agentDefinitionId, t.mcpServerId] })],
 );
 
-export type TaskStatus =
-  | "pending"
-  | "scheduled"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "timeout"
-  | "canceled";
+export type { TaskStatus };
 
 export const tasks = pgTable("tasks", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -136,6 +130,8 @@ export const tasks = pgTable("tasks", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   startedAt: timestamp("started_at", { withTimezone: true }),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
+  // Archived tasks are hidden from the default list view but kept forever.
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
 }, (t) => [
   index("tasks_created_by_idx").on(t.createdBy, t.createdAt.desc()),
   index("tasks_status_idx").on(t.status),

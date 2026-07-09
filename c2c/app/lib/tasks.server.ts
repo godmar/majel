@@ -81,8 +81,4 @@ export async function failTask(taskId: string, error: string): Promise<void> {
   await addTaskEvent(taskId, "error", error);
 }
 
-const TERMINAL: Task["status"][] = ["succeeded", "failed", "timeout", "canceled"];
-
-export function isTerminal(status: Task["status"]): boolean {
-  return TERMINAL.includes(status);
-}
+export { TERMINAL, isTerminal } from "./task-status";

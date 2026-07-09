@@ -14,7 +14,9 @@ import ListItemText from "@mui/material/ListItemText";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
+import ArchiveIcon from "@mui/icons-material/Archive";
 import CancelIcon from "@mui/icons-material/Cancel";
+import UnarchiveIcon from "@mui/icons-material/Unarchive";
 import CircleIcon from "@mui/icons-material/Circle";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
@@ -62,6 +64,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       createdAt: task.createdAt,
       startedAt: task.startedAt,
       finishedAt: task.finishedAt,
+      archived: task.archivedAt !== null,
     },
     agentName: agent?.name ?? "unknown",
     events: events.map((e) => ({ id: e.id, ts: e.ts, type: e.type, message: e.message })),
@@ -80,7 +83,8 @@ export async function action({ request, params }: Route.ActionArgs) {
   }
 
   const form = await request.formData();
-  if (form.get("intent") === "cancel" && !isTerminal(task.status)) {
+  const intent = form.get("intent");
+  if (intent === "cancel" && !isTerminal(task.status)) {
     const { cancelTask } = await import("~/lib/k8s.server");
     await cancelTask(task.id);
     await db
@@ -88,6 +92,10 @@ export async function action({ request, params }: Route.ActionArgs) {
       .set({ status: "canceled", finishedAt: new Date() })
       .where(eq(tasks.id, task.id));
     await addTaskEvent(task.id, "canceled", `Canceled by ${user.username}`);
+  } else if (intent === "archive" && isTerminal(task.status)) {
+    await db.update(tasks).set({ archivedAt: new Date() }).where(eq(tasks.id, task.id));
+  } else if (intent === "unarchive") {
+    await db.update(tasks).set({ archivedAt: null }).where(eq(tasks.id, task.id));
   }
   return { ok: true };
 }
@@ -154,8 +162,20 @@ export default function TaskDetail({ loaderData }: Route.ComponentProps) {
             {duration}s
           </Typography>
         )}
+        {task.archived && <Chip size="small" label="Archived" />}
         <Box sx={{ flexGrow: 1 }} />
-        {!terminal && (
+        {terminal ? (
+          <Form method="post">
+            <input type="hidden" name="intent" value={task.archived ? "unarchive" : "archive"} />
+            <Button
+              type="submit"
+              size="small"
+              startIcon={task.archived ? <UnarchiveIcon /> : <ArchiveIcon />}
+            >
+              {task.archived ? "Unarchive" : "Archive"}
+            </Button>
+          </Form>
+        ) : (
           <Form
             method="post"
             onSubmit={(e) => {
