@@ -6,7 +6,7 @@ metadata:
   labels:
     app: c2c
 spec:
-  replicas: 1 # in-process reconciler assumes a single instance
+  replicas: 1 # in-process reconciler and queue dispatcher assume a single instance
   selector:
     matchLabels:
       app: c2c

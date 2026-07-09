@@ -87,7 +87,7 @@ Responses:
 
 | Status | Body | Meaning |
 |---|---|---|
-| `201` | `{"id": "<uuid>", "status": "pending"}` | Task created and being launched. |
+| `201` | `{"id": "<uuid>", "status": "pending"}` | Task created; it launches immediately if the user's API key has a free concurrency slot, otherwise it queues (see lifecycle below). |
 | `400` | `{"error": "..."}` | Malformed body / missing required field. |
 | `401` | — | Missing or invalid bearer token. |
 | `404` | `{"error": "..."}` | Unknown or disabled agent, or unknown/disabled user. |

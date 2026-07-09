@@ -82,6 +82,28 @@ immediately — no cluster restart needed. Tasks already running keep the files 
 with. (The build stages the directory into gitignored `sandbox/home/`; never
 edit that copy.)
 
+## Concurrency limits (per LLM API key)
+
+Every task consumes one LLM API key — the submitting user's key for the
+provider the task's model runs on. Each key can carry a **concurrent task
+limit**, set by the key's owner next to the key under **Settings → API Keys**
+(0 = unlimited, the default).
+
+When a key is at its limit, additional tasks wait in a FIFO queue (status
+`pending`, with a "Waiting for a free slot" entry in the task's event log) and
+start automatically as soon as one of that key's tasks reaches a terminal
+state — succeeded, failed, timeout, or canceled. Queued tasks can be canceled
+like any other, and time spent waiting does not count against the agent's
+execution timeout.
+
+Implementation notes: `createTask()` no longer launches directly — the
+dispatcher in `c2c/app/lib/queue.server.ts` launches pending tasks
+oldest-first, re-triggered by every slot-freeing event and by the 30-second
+reconciler as a backstop (which also recovers queued tasks after a server
+restart). The dispatcher's bookkeeping is in-process and assumes the c2c
+Deployment runs a **single replica**; scaling it out requires adding a
+cross-replica lock (e.g. a Postgres advisory lock) around the dispatch pass.
+
 ## Machine API (external triggers)
 
 Other applications can create tasks programmatically on behalf of a user

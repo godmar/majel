@@ -86,7 +86,8 @@ kubectl -n vtlib rollout restart deploy/c2c
 ## Notes
 
 - `deploy/c2c.yaml` runs a single replica: the in-process task reconciler
-  assumes one instance.
+  and the concurrency-limit dispatcher (`queue.server.ts`) assume one
+  instance.
 - TLS terminates outside the cluster (same as the other vtlib ingresses);
   the Ingress only declares the host route.
 - Agent Jobs are created by the C2C at runtime with labels
