@@ -8,10 +8,13 @@ import TableCell from "@mui/material/TableCell";
 import TableContainer from "@mui/material/TableContainer";
 import TableHead from "@mui/material/TableHead";
 import TableRow from "@mui/material/TableRow";
+import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import AddIcon from "@mui/icons-material/Add";
-import { asc, eq, sql } from "drizzle-orm";
-import { Link, useNavigate } from "react-router";
+import EditIcon from "@mui/icons-material/Edit";
+import { asc, sql } from "drizzle-orm";
+import { Link } from "react-router";
 import type { Route } from "./+types/admin-agents";
 import { requireAdmin } from "~/lib/auth.server";
 import { db } from "~/lib/db.server";
@@ -35,7 +38,6 @@ export async function loader({ request }: Route.LoaderArgs) {
 }
 
 export default function AdminAgents({ loaderData }: Route.ComponentProps) {
-  const navigate = useNavigate();
   return (
     <>
       <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 2 }}>
@@ -54,16 +56,12 @@ export default function AdminAgents({ loaderData }: Route.ComponentProps) {
               <TableCell>MCP servers</TableCell>
               <TableCell>Timeout</TableCell>
               <TableCell>Status</TableCell>
+              <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {loaderData.agents.map((a) => (
-              <TableRow
-                key={a.id}
-                hover
-                onClick={() => navigate(`/admin/agents/${a.id}`)}
-                sx={{ cursor: "pointer" }}
-              >
+              <TableRow key={a.id} hover>
                 <TableCell sx={{ whiteSpace: "nowrap" }}>{a.name}</TableCell>
                 <TableCell
                   title={a.description ?? ""}
@@ -80,6 +78,13 @@ export default function AdminAgents({ loaderData }: Route.ComponentProps) {
                     label={a.enabled ? "Enabled" : "Disabled"}
                     color={a.enabled ? "success" : "default"}
                   />
+                </TableCell>
+                <TableCell align="right">
+                  <Tooltip title="Edit">
+                    <IconButton size="small" component={Link} to={`/admin/agents/${a.id}`}>
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                 </TableCell>
               </TableRow>
             ))}
