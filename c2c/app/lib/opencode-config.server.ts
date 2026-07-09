@@ -94,6 +94,22 @@ export async function renderOpencodeConfig(
     };
   }
 
+  // Missing permission keys default to "allow", matching what the agent
+  // editor displays. opencode's built-in read policy additionally gates
+  // secret-looking files ({"*.env": "ask", "*.env.*": "ask"}) even when read
+  // is generally allowed — and an unanswered "ask" hangs a headless pod — so
+  // an "allow" must be spelled as an explicit pattern map to beat those
+  // more-specific built-in patterns.
+  const permission: Record<string, unknown> = {
+    read: "allow",
+    edit: "allow",
+    bash: "allow",
+    ...agent.permissions,
+  };
+  if (permission.read === "allow") {
+    permission.read = { "*": "allow", "*.env": "allow", "*.env.*": "allow" };
+  }
+
   return {
     $schema: "https://opencode.ai/config.json",
     default_agent: agent.name,
@@ -114,7 +130,7 @@ export async function renderOpencodeConfig(
       [agent.name]: {
         mode: "primary",
         prompt: agent.systemPrompt,
-        permission: agent.permissions,
+        permission,
       },
     },
   };
