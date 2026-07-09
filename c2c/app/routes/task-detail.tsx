@@ -93,6 +93,9 @@ export async function action({ request, params }: Route.ActionArgs) {
       .set({ status: "canceled", finishedAt: new Date() })
       .where(eq(tasks.id, task.id));
     await addTaskEvent(task.id, "canceled", `Canceled by ${user.username}`);
+    // Canceling an in-flight task frees a concurrency slot.
+    const { dispatchQueue } = await import("~/lib/queue.server");
+    dispatchQueue();
   } else if (intent === "archive" && isTerminal(task.status)) {
     await db.update(tasks).set({ archivedAt: new Date() }).where(eq(tasks.id, task.id));
   } else if (intent === "unarchive") {

@@ -35,6 +35,7 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
     .values({
       agentDefinitionId: agent.id,
       createdBy: input.createdBy ?? null,
+      providerId: provider.id,
       triggerSource: input.triggerSource,
       prompt: input.prompt,
       modelOverride: input.modelOverride ?? null,
@@ -53,13 +54,10 @@ export async function createTask(input: CreateTaskInput): Promise<Task> {
 
   await addTaskEvent(task.id, "created", `Task created via ${input.triggerSource}`);
 
-  // Launch on the cluster (fire-and-forget; the reconciler and task detail
-  // page surface launch failures).
-  const { launchTask } = await import("./k8s.server");
-  launchTask(task.id).catch(async (err) => {
-    console.error(`launch failed for task ${task.id}:`, err);
-    await failTask(task.id, `Failed to launch agent job: ${err instanceof Error ? err.message : err}`);
-  });
+  // The dispatcher launches the task once the key's concurrency limit
+  // allows; with a free slot that happens immediately.
+  const { dispatchQueue } = await import("./queue.server");
+  dispatchQueue();
 
   return task;
 }
@@ -79,6 +77,9 @@ export async function failTask(taskId: string, error: string): Promise<void> {
     .set({ status: "failed", error, finishedAt: new Date() })
     .where(eq(tasks.id, taskId));
   await addTaskEvent(taskId, "error", error);
+  // A terminal transition may free a concurrency slot.
+  const { dispatchQueue } = await import("./queue.server");
+  dispatchQueue();
 }
 
 export { TERMINAL, isTerminal } from "./task-status";

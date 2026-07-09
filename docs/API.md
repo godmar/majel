@@ -139,6 +139,11 @@ The last four are terminal. A typical task takes between a minute and the
 agent's configured timeout (default 30 minutes), so **poll every 5–15 seconds
 until the status is terminal**. There is no callback/webhook mechanism yet.
 
+A task can stay `pending` for a while if the user's API key has a concurrency
+limit (set next to the key under **Settings → API Keys**) and that many tasks
+are already running on it; queued tasks start automatically, oldest first, as
+slots free up. Queue wait does not count against the task's execution timeout.
+
 ### `GET /api/tasks/:taskId/files/:fileId` — download a file
 
 Returns the raw bytes of one task file (input or output) with its stored

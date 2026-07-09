@@ -73,6 +73,9 @@ export const userProviderKeys = pgTable(
       .notNull()
       .references(() => providers.id, { onDelete: "cascade" }),
     apiKey: text("api_key").notNull(),
+    // Max tasks concurrently in flight on this key; 0 = unlimited. Excess
+    // tasks queue (status "pending") until a slot frees.
+    concurrencyLimit: integer("concurrency_limit").notNull().default(0),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.userId, t.providerId] })],
@@ -115,6 +118,10 @@ export const tasks = pgTable("tasks", {
     .notNull()
     .references(() => agentDefinitions.id),
   createdBy: integer("created_by").references(() => users.id),
+  // Provider of the model the task runs on, resolved at creation; together
+  // with created_by this identifies the LLM API key the task consumes, which
+  // is the scope for concurrency limits.
+  providerId: integer("provider_id").references(() => providers.id),
   triggerSource: text("trigger_source", { enum: ["web", "api"] }).notNull().default("web"),
   prompt: text("prompt").notNull(),
   modelOverride: text("model_override"),

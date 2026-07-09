@@ -27,17 +27,22 @@ export async function loader({ request }: Route.LoaderArgs) {
     .orderBy(asc(providers.name));
 
   const keys = await db
-    .select({ providerId: userProviderKeys.providerId, updatedAt: userProviderKeys.updatedAt })
+    .select({
+      providerId: userProviderKeys.providerId,
+      updatedAt: userProviderKeys.updatedAt,
+      concurrencyLimit: userProviderKeys.concurrencyLimit,
+    })
     .from(userProviderKeys)
     .where(eq(userProviderKeys.userId, user.id));
-  const keyByProvider = new Map(keys.map((k) => [k.providerId, k.updatedAt]));
+  const keyByProvider = new Map(keys.map((k) => [k.providerId, k]));
 
   return {
     providers: rows.map((p) => ({
       id: p.id,
       name: p.displayName ?? p.name,
       baseUrl: p.baseUrl,
-      keySetAt: keyByProvider.get(p.id)?.toISOString() ?? null,
+      keySetAt: keyByProvider.get(p.id)?.updatedAt.toISOString() ?? null,
+      concurrencyLimit: keyByProvider.get(p.id)?.concurrencyLimit ?? 0,
     })),
   };
 }
@@ -54,6 +59,25 @@ export async function action({ request }: Route.ActionArgs) {
       .where(
         and(eq(userProviderKeys.userId, user.id), eq(userProviderKeys.providerId, providerId)),
       );
+    return { ok: true };
+  }
+
+  if (form.get("intent") === "set-limit") {
+    const limit = Number(form.get("limit"));
+    if (!Number.isInteger(limit) || limit < 0) {
+      return { error: "The concurrency limit must be a whole number (0 = unlimited)." };
+    }
+    const updated = await db
+      .update(userProviderKeys)
+      .set({ concurrencyLimit: limit, updatedAt: new Date() })
+      .where(
+        and(eq(userProviderKeys.userId, user.id), eq(userProviderKeys.providerId, providerId)),
+      )
+      .returning({ providerId: userProviderKeys.providerId });
+    if (updated.length === 0) return { error: "Save an API key first." };
+    // A raised limit may allow queued tasks to start.
+    const { dispatchQueue } = await import("~/lib/queue.server");
+    dispatchQueue();
     return { ok: true };
   }
 
@@ -130,6 +154,27 @@ export default function Settings({ loaderData, actionData }: Route.ComponentProp
                 )}
               </Stack>
             </Form>
+            {p.keySetAt && (
+              <Form method="post">
+                <input type="hidden" name="providerId" value={p.id} />
+                <input type="hidden" name="intent" value="set-limit" />
+                <Stack direction="row" spacing={1} sx={{ mt: 1.5, alignItems: "center" }}>
+                  <TextField
+                    name="limit"
+                    label="Concurrent task limit"
+                    size="small"
+                    type="number"
+                    defaultValue={p.concurrencyLimit}
+                    helperText="Max tasks running at once on this key; 0 = unlimited. Extra tasks queue until a slot frees."
+                    slotProps={{ htmlInput: { min: 0, step: 1 } }}
+                    sx={{ width: 220 }}
+                  />
+                  <Button type="submit" disabled={busy}>
+                    Save limit
+                  </Button>
+                </Stack>
+              </Form>
+            )}
           </Paper>
         ))}
         {loaderData.providers.length === 0 && (

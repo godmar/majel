@@ -1,6 +1,7 @@
 import { eq, inArray } from "drizzle-orm";
 import { db } from "./db.server";
 import { readJob } from "./k8s.server";
+import { dispatchQueue } from "./queue.server";
 import { agentDefinitions, tasks } from "./schema.server";
 import { addTaskEvent } from "./tasks.server";
 
@@ -38,6 +39,7 @@ async function reconcile(): Promise<void> {
       status: tasks.status,
       k8sJobName: tasks.k8sJobName,
       createdAt: tasks.createdAt,
+      startedAt: tasks.startedAt,
       timeoutSeconds: agentDefinitions.timeoutSeconds,
     })
     .from(tasks)
@@ -51,14 +53,20 @@ async function reconcile(): Promise<void> {
 
     try {
       if (!task.k8sJobName) {
-        // Launch never completed (crash between insert and Job creation).
-        if (age > REPORT_GRACE_MS + 60_000) {
-          await finishTask(task.id, "failed", "Agent job was never created");
-        }
+        // Not launched yet: queued behind a concurrency limit (or a launch in
+        // progress). The dispatcher owns these; queue wait is unbounded by
+        // design, so there is nothing to reconcile.
         continue;
       }
 
-      if (age > task.timeoutSeconds * 1000 + TIMEOUT_SLACK_MS) {
+      // Wall-clock timeout fallback, anchored at runner start so time spent
+      // queued doesn't count against the execution budget. Before the runner
+      // starts, the Job's own activeDeadlineSeconds covers timeouts (handled
+      // below via the DeadlineExceeded condition).
+      if (
+        task.startedAt &&
+        now - new Date(task.startedAt).getTime() > task.timeoutSeconds * 1000 + TIMEOUT_SLACK_MS
+      ) {
         await finishTask(
           task.id,
           "timeout",
@@ -115,6 +123,10 @@ async function reconcile(): Promise<void> {
       console.error(`reconciler: error handling task ${task.id}:`, err);
     }
   }
+
+  // Backstop for the event-driven dispatch calls: starts queued tasks whose
+  // slot-freeing event was missed (e.g. across a server restart).
+  dispatchQueue();
 }
 
 export function startReconciler(): void {
@@ -123,5 +135,7 @@ export function startReconciler(): void {
   setInterval(() => {
     reconcile().catch((err) => console.error("reconciler pass failed:", err));
   }, INTERVAL_MS).unref();
+  // Recover tasks that were queued when the previous process exited.
+  dispatchQueue();
   console.error("task reconciler started");
 }

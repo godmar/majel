@@ -43,5 +43,10 @@ export async function action({ request, params }: Route.ActionArgs) {
     result.ok ? "completed" : "error",
     result.ok ? "Agent completed the task" : (result.error ?? "Agent failed"),
   );
+
+  // The finished task may have freed a concurrency slot.
+  const { dispatchQueue } = await import("~/lib/queue.server");
+  dispatchQueue();
+
   return Response.json({ ok: true });
 }
