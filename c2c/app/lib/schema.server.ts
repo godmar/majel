@@ -142,6 +142,11 @@ export const tasks = pgTable("tasks", {
   finishedAt: timestamp("finished_at", { withTimezone: true }),
   // Archived tasks are hidden from the default list view but kept forever.
   archivedAt: timestamp("archived_at", { withTimezone: true }),
+  // Human evaluation of the agent's performance on this task (Likert 1–5).
+  // One rating per task; last writer wins and is recorded.
+  rating: integer("rating"),
+  ratingUpdatedBy: integer("rating_updated_by").references(() => users.id),
+  ratingUpdatedAt: timestamp("rating_updated_at", { withTimezone: true }),
 }, (t) => [
   index("tasks_created_by_idx").on(t.createdBy, t.createdAt.desc()),
   index("tasks_status_idx").on(t.status),
@@ -160,6 +165,18 @@ export const taskFiles = pgTable("task_files", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [index("task_files_task_idx").on(t.taskId)]);
 
+export const taskComments = pgTable("task_comments", {
+  id: serial("id").primaryKey(),
+  taskId: uuid("task_id")
+    .notNull()
+    .references(() => tasks.id, { onDelete: "cascade" }),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("task_comments_task_idx").on(t.taskId, t.createdAt)]);
+
 export const taskEvents = pgTable("task_events", {
   id: serial("id").primaryKey(),
   taskId: uuid("task_id")
@@ -177,4 +194,5 @@ export type Provider = typeof providers.$inferSelect;
 export type AgentDefinition = typeof agentDefinitions.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type TaskFile = typeof taskFiles.$inferSelect;
+export type TaskComment = typeof taskComments.$inferSelect;
 export type TaskEvent = typeof taskEvents.$inferSelect;

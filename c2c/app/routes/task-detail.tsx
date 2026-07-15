@@ -12,7 +12,9 @@ import ListItem from "@mui/material/ListItem";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Paper from "@mui/material/Paper";
+import Rating from "@mui/material/Rating";
 import Stack from "@mui/material/Stack";
+import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import ArchiveIcon from "@mui/icons-material/Archive";
 import CancelIcon from "@mui/icons-material/Cancel";
@@ -23,7 +25,7 @@ import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 import ReplayIcon from "@mui/icons-material/Replay";
 import * as React from "react";
 import { and, asc, eq } from "drizzle-orm";
-import { Form, redirect, useRevalidator } from "react-router";
+import { Form, redirect, useFetcher, useRevalidator } from "react-router";
 import type { Route } from "./+types/task-detail";
 import ActivityTimeline from "~/components/ActivityTimeline";
 import DateTime from "~/components/DateTime";
@@ -32,7 +34,7 @@ import TaskStatusChip from "~/components/TaskStatusChip";
 import { requireUser } from "~/lib/auth.server";
 import { db } from "~/lib/db.server";
 import { listTaskFiles } from "~/lib/files.server";
-import { agentDefinitions, taskEvents, taskFiles, tasks } from "~/lib/schema.server";
+import { agentDefinitions, taskComments, taskEvents, taskFiles, tasks, users } from "~/lib/schema.server";
 import { addTaskEvent, createTask, isTerminal } from "~/lib/tasks.server";
 
 export async function loader({ request, params }: Route.LoaderArgs) {
@@ -53,6 +55,23 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     .orderBy(asc(taskEvents.ts));
   const files = await listTaskFiles(task.id);
 
+  const comments = await db
+    .select({
+      id: taskComments.id,
+      body: taskComments.body,
+      createdAt: taskComments.createdAt,
+      author: users.displayName,
+      authorUsername: users.username,
+    })
+    .from(taskComments)
+    .innerJoin(users, eq(taskComments.userId, users.id))
+    .where(eq(taskComments.taskId, task.id))
+    .orderBy(asc(taskComments.createdAt));
+
+  const ratedBy = task.ratingUpdatedBy
+    ? await db.query.users.findFirst({ where: eq(users.id, task.ratingUpdatedBy) })
+    : null;
+
   return {
     task: {
       id: task.id,
@@ -66,11 +85,15 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       startedAt: task.startedAt,
       finishedAt: task.finishedAt,
       archived: task.archivedAt !== null,
+      rating: task.rating,
+      ratedBy: ratedBy ? (ratedBy.displayName ?? ratedBy.username) : null,
+      ratedAt: task.ratingUpdatedAt,
     },
     agentName: agent?.name ?? "unknown",
     events: events.map((e) => ({ id: e.id, ts: e.ts, type: e.type, message: e.message })),
     inputFiles: files.filter((f) => f.kind === "input"),
     outputFiles: files.filter((f) => f.kind === "output"),
+    comments,
     terminal: isTerminal(task.status),
   };
 }
@@ -125,6 +148,23 @@ export async function action({ request, params }: Route.ActionArgs) {
       if (err instanceof Response) throw err;
       return { error: err instanceof Error ? err.message : "Failed to rerun task" };
     }
+  } else if (intent === "rate") {
+    // Single rating per task; whoever changed it last is recorded. An empty
+    // value clears the rating (MUI Rating reports null when deselected).
+    const raw = form.get("rating");
+    const rating = raw === "" || raw === null ? null : Number(raw);
+    if (rating !== null && (!Number.isInteger(rating) || rating < 1 || rating > 5)) {
+      return { error: "Rating must be between 1 and 5." };
+    }
+    await db
+      .update(tasks)
+      .set({ rating, ratingUpdatedBy: user.id, ratingUpdatedAt: new Date() })
+      .where(eq(tasks.id, task.id));
+  } else if (intent === "comment") {
+    const body = String(form.get("body") ?? "").trim();
+    if (!body) return { error: "Comment cannot be empty." };
+    if (body.length > 10000) return { error: "Comment is too long (max 10000 characters)." };
+    await db.insert(taskComments).values({ taskId: task.id, userId: user.id, body });
   }
   return { error: null };
 }
@@ -157,8 +197,99 @@ function FileList({ taskId, files }: { taskId: string; files: { id: number; file
   );
 }
 
+function FeedbackCard({
+  task,
+  comments,
+}: {
+  task: { id: string; rating: number | null; ratedBy: string | null; ratedAt: Date | string | null };
+  comments: {
+    id: number;
+    body: string;
+    createdAt: Date | string;
+    author: string | null;
+    authorUsername: string;
+  }[];
+}) {
+  const ratingFetcher = useFetcher();
+  const commentFetcher = useFetcher<{ error: string | null }>();
+
+  // Show the in-flight rating immediately; the loader value catches up after
+  // revalidation.
+  const pendingRating = ratingFetcher.formData?.get("rating");
+  const rating =
+    pendingRating != null ? (pendingRating === "" ? null : Number(pendingRating)) : task.rating;
+
+  return (
+    <Paper sx={{ p: 2, mb: 2 }}>
+      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+        Feedback
+      </Typography>
+      <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap" }}>
+        <Typography variant="body2">How well did the agent perform?</Typography>
+        <Rating
+          value={rating ?? 0}
+          onChange={(_e, value) =>
+            ratingFetcher.submit(
+              { intent: "rate", rating: value === null ? "" : String(value) },
+              { method: "post" },
+            )
+          }
+        />
+        {task.rating !== null && task.ratedBy && (
+          <Typography variant="body2" color="text.secondary">
+            {task.rating}/5 — last rated by {task.ratedBy}
+            {task.ratedAt && (
+              <>
+                {" on "}
+                <DateTime value={task.ratedAt} />
+              </>
+            )}
+          </Typography>
+        )}
+      </Stack>
+
+      <Divider sx={{ my: 1.5 }} />
+      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+        Comments {comments.length > 0 && `(${comments.length})`}
+      </Typography>
+      <Stack spacing={1.5} sx={{ mb: comments.length > 0 ? 2 : 0 }}>
+        {comments.map((c) => (
+          <Box key={c.id}>
+            <Typography variant="body2" color="text.secondary">
+              {c.author ?? c.authorUsername} — <DateTime value={c.createdAt} />
+            </Typography>
+            <Typography sx={{ whiteSpace: "pre-wrap" }}>{c.body}</Typography>
+          </Box>
+        ))}
+      </Stack>
+      {commentFetcher.data?.error && (
+        <Alert severity="error" sx={{ mb: 1 }}>
+          {commentFetcher.data.error}
+        </Alert>
+      )}
+      <commentFetcher.Form method="post">
+        <input type="hidden" name="intent" value="comment" />
+        <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
+          {/* Remounts (and thus clears) when a new comment lands. */}
+          <TextField
+            key={comments.length}
+            name="body"
+            placeholder="Add a comment…"
+            multiline
+            fullWidth
+            size="small"
+          />
+          <Button type="submit" variant="outlined" disabled={commentFetcher.state !== "idle"}>
+            Comment
+          </Button>
+        </Stack>
+      </commentFetcher.Form>
+    </Paper>
+  );
+}
+
 export default function TaskDetail({ loaderData, actionData }: Route.ComponentProps) {
-  const { task, agentName, events, inputFiles, outputFiles, terminal } = loaderData;
+  const { task, agentName, events, inputFiles, outputFiles, comments, terminal } = loaderData;
   const revalidator = useRevalidator();
 
   // Live-refresh while the task is active; the runner keeps the transcript
@@ -274,6 +405,8 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
           <FileList taskId={task.id} files={outputFiles} />
         </Paper>
       )}
+
+      <FeedbackCard task={task} comments={comments} />
 
       <Accordion variant="outlined" disableGutters>
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>

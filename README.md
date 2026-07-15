@@ -104,6 +104,17 @@ restart). The dispatcher's bookkeeping is in-process and assumes the c2c
 Deployment runs a **single replica**; scaling it out requires adding a
 cross-replica lock (e.g. a Postgres advisory lock) around the dispatch pass.
 
+## Task feedback (rating + comments)
+
+The task detail page carries a **Feedback** card where humans evaluate the
+agent's work: a 1–5 star rating (Likert scale) and a comment thread. A task
+holds a single rating — anyone with access to the task (its creator or an
+admin) can change it, and the system records who changed it last and when.
+Comments are append-only and unlimited; each shows its author and timestamp.
+Both live in Postgres (`tasks.rating` / `rating_updated_by` /
+`rating_updated_at` and the `task_comments` table), so they are available for
+later analysis of agent quality.
+
 ## Machine API (external triggers)
 
 Other applications can create tasks programmatically on behalf of a user
