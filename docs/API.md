@@ -216,6 +216,9 @@ console.log(task.resultText ?? task.error);
 - Listing/discovering agents, models, or users — those are configured by
   admins in the web UI; coordinate the names out of band.
 - Canceling a task (available in the web UI only).
+- Task feedback — the 1–5 rating and comments on a task's detail page are
+  entered and read in the web UI only; the status response does not include
+  them.
 - Push notifications when a task finishes — poll for now.
 - The `/api/runner/...` routes are internal to the sandbox runner; external
   applications should not use them.
