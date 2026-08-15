@@ -60,7 +60,7 @@ function MonoBlock({ children }: { children: string }) {
         maxHeight: 320,
         fontSize: "0.8rem",
         whiteSpace: "pre-wrap",
-        wordBreak: "break-word",
+        overflowWrap: "anywhere",
       }}
     >
       {children}
@@ -75,7 +75,14 @@ function ToolCall({ part }: { part: TranscriptPart }) {
   const summary = toolSummary(part);
   return (
     <Accordion variant="outlined" disableGutters sx={{ "&:before": { display: "none" } }}>
-      <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+      <AccordionSummary
+        expandIcon={<ExpandMoreIcon />}
+        // Every flex ancestor between here and the truncated text needs to be
+        // allowed to shrink; MUI's own summary wrapper defaults to
+        // min-width:auto, so a long command sizes it to the full command and
+        // pushes it out of the card instead of ellipsizing.
+        sx={{ "& .MuiAccordionSummary-content": { minWidth: 0 } }}
+      >
         <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0, width: "100%" }}>
           <BuildIcon fontSize="small" color={failed ? "error" : "action"} />
           <Chip
@@ -83,12 +90,16 @@ function ToolCall({ part }: { part: TranscriptPart }) {
             label={part.tool ?? "tool"}
             color={failed ? "error" : running ? "info" : "default"}
             variant="outlined"
+            sx={{ flexShrink: 0 }}
           />
           <Typography
             variant="body2"
             color="text.secondary"
             noWrap
-            sx={{ fontFamily: summary.startsWith("/") || part.tool === "bash" ? "monospace" : undefined }}
+            sx={{
+              minWidth: 0,
+              fontFamily: summary.startsWith("/") || part.tool === "bash" ? "monospace" : undefined,
+            }}
           >
             {summary}
           </Typography>
@@ -138,7 +149,11 @@ function Reasoning({ text }: { text: string }) {
         </Stack>
       </AccordionSummary>
       <AccordionDetails>
-        <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: "pre-wrap" }}>
+        <Typography
+          variant="body2"
+          color="text.secondary"
+          sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+        >
           {text}
         </Typography>
       </AccordionDetails>

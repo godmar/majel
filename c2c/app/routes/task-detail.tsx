@@ -258,7 +258,9 @@ function FeedbackCard({
             <Typography variant="body2" color="text.secondary">
               {c.author ?? c.authorUsername} — <DateTime value={c.createdAt} />
             </Typography>
-            <Typography sx={{ whiteSpace: "pre-wrap" }}>{c.body}</Typography>
+            <Typography sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+              {c.body}
+            </Typography>
           </Box>
         ))}
       </Stack>
@@ -362,7 +364,11 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
         <Typography variant="subtitle2" color="text.secondary" gutterBottom>
           Prompt
         </Typography>
-        <Typography sx={{ whiteSpace: "pre-wrap" }}>{task.prompt}</Typography>
+        {/* Prompts routinely carry shell commands and URLs, which pre-wrap
+            alone will not break. */}
+        <Typography sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+          {task.prompt}
+        </Typography>
         {inputFiles.length > 0 && (
           <>
             <Divider sx={{ my: 1.5 }} />
@@ -421,6 +427,9 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
                 </ListItemIcon>
                 <ListItemText
                   primary={e.message ?? e.type}
+                  // Refusal events quote the pattern that was refused, which
+                  // can be a long URL.
+                  slotProps={{ primary: { sx: { overflowWrap: "anywhere" } } }}
                   secondary={
                     <>
                       {e.type} — <DateTime value={e.ts} />

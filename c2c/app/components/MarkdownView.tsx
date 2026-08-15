@@ -15,13 +15,22 @@ export default function MarkdownView({ children }: { children: string }) {
   return (
     <Box
       sx={{
+        // Agent output is full of shell commands and URLs, which have few or
+        // no break opportunities. "anywhere" (rather than "break-word") also
+        // shrinks the min-content width, so these boxes can still be sized by
+        // a flex parent instead of being forced open by their longest line.
+        overflowWrap: "anywhere",
         "& pre": {
           p: 1.5,
           borderRadius: 1,
           bgcolor: "action.hover",
           overflowX: "auto",
+          maxWidth: "100%",
           fontSize: "0.85rem",
         },
+        // Fenced blocks keep their line breaks and scroll; only inline code
+        // needs to break mid-token.
+        "& pre code": { overflowWrap: "normal" },
         "& code": { fontFamily: "monospace" },
         "& :first-of-type": { mt: 0 },
       }}
