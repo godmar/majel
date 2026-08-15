@@ -1,8 +1,9 @@
 import * as k8s from "@kubernetes/client-node";
 import { eq } from "drizzle-orm";
 import { db } from "./db.server";
+import { egressProxyConfigured, mintEgressCredential } from "./egress.server";
 import { env } from "./env.server";
-import { renderOpencodeConfig } from "./opencode-config.server";
+import { egressAllowlist, renderOpencodeConfig } from "./opencode-config.server";
 import { agentDefinitions, tasks } from "./schema.server";
 import { addTaskEvent } from "./tasks.server";
 
@@ -64,9 +65,31 @@ export async function launchTask(taskId: string): Promise<void> {
   }
 
   const config = await renderOpencodeConfig(agent, task.modelOverride, task.createdBy);
+  const allowedHosts = await egressAllowlist(agent);
   const jobName = jobNameForTask(taskId);
   const secretName = `${jobName}-config`;
   const ccApiUrl = env.CC_INTERNAL_URL ?? env.CC_BEARER_URL;
+
+  // The runner reaches the C2C directly over the pod network, so it must
+  // bypass the proxy (Node's fetch ignores proxy env vars anyway) and the
+  // NetworkPolicy has to allow it by pod selector — which only works for the
+  // in-cluster URL. A public CC_BEARER_URL here would be blocked.
+  const noProxy = ["localhost", "127.0.0.1", new URL(ccApiUrl).hostname].join(",");
+
+  const proxyUrl = egressProxyConfigured()
+    ? (() => {
+        const credential = mintEgressCredential({
+          hosts: allowedHosts,
+          // Outliving the pod buys an attacker nothing, but a credential that
+          // cannot be replayed later is free.
+          expires: Math.floor(Date.now() / 1000) + agent.timeoutSeconds + 300,
+        });
+        const proxy = new URL(env.SANDBOX_EGRESS_PROXY);
+        proxy.username = "agent";
+        proxy.password = credential;
+        return proxy.toString();
+      })()
+    : null;
 
   await coreApi().createNamespacedSecret({
     namespace: NAMESPACE,
@@ -78,6 +101,7 @@ export async function launchTask(taskId: string): Promise<void> {
       stringData: {
         "config.json": JSON.stringify(config),
         "cc-bearer-token": env.CC_BEARER_TOKEN,
+        ...(proxyUrl ? { "egress-proxy-url": proxyUrl } : {}),
       },
     },
   });
@@ -115,7 +139,22 @@ export async function launchTask(taskId: string): Promise<void> {
                   },
                   { name: "OPENCODE_CONFIG", value: "/etc/opencode/config.json" },
                   { name: "TASK_TIMEOUT_SECONDS", value: String(agent.timeoutSeconds) },
-                  { name: "AUTO_APPROVE_PERMISSIONS", value: agent.autoApprove ? "true" : "false" },
+                  // opencode honors these for its provider, MCP and registry
+                  // calls; the NetworkPolicy is what makes them mandatory
+                  // rather than advisory, since anything bypassing the proxy
+                  // (a raw socket from the bash tool) simply cannot connect.
+                  ...(proxyUrl
+                    ? [
+                        ...["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"].map((name) => ({
+                          name,
+                          valueFrom: {
+                            secretKeyRef: { name: secretName, key: "egress-proxy-url" },
+                          },
+                        })),
+                        { name: "NO_PROXY", value: noProxy },
+                        { name: "no_proxy", value: noProxy },
+                      ]
+                    : []),
                 ],
                 volumeMounts: [{ name: "opencode-config", mountPath: "/etc/opencode", readOnly: true }],
                 resources: {

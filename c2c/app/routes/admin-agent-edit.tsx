@@ -58,16 +58,28 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   return { agent, modelOptions, allMcp, selectedMcp };
 }
 
+const PERMISSION_VALUES = ["allow", "deny"] as const;
+
 const formSchema = z.object({
   name: z.string().trim().min(1).max(64),
   description: z.string().trim().default(""),
   systemPrompt: z.string().trim().min(1, "System prompt is required"),
   model: z.string().trim().min(1, "Model is required"),
   timeoutSeconds: z.coerce.number().int().min(60).max(24 * 3600),
-  permissionRead: z.enum(["allow", "ask", "deny"]),
-  permissionEdit: z.enum(["allow", "ask", "deny"]),
-  permissionBash: z.enum(["allow", "ask", "deny"]),
-  autoApprove: z.coerce.boolean(),
+  // No "ask": a one-shot pod has nobody to ask, so it would only ever mean
+  // "deny, after burning the whole timeout".
+  permissionRead: z.enum(["allow", "deny"]),
+  permissionEdit: z.enum(["allow", "deny"]),
+  permissionBash: z.enum(["allow", "deny"]),
+  egressExtraHosts: z
+    .string()
+    .default("")
+    .transform((s) =>
+      s
+        .split(/[\s,]+/)
+        .map((h) => h.trim().toLowerCase())
+        .filter(Boolean),
+    ),
   enabled: z.coerce.boolean(),
 });
 
@@ -94,7 +106,7 @@ export async function action({ request, params }: Route.ActionArgs) {
     permissionRead: form.get("permissionRead") ?? "allow",
     permissionEdit: form.get("permissionEdit") ?? "allow",
     permissionBash: form.get("permissionBash") ?? "allow",
-    autoApprove: form.get("autoApprove") === "on",
+    egressExtraHosts: form.get("egressExtraHosts") ?? "",
     enabled: form.get("enabled") === "on",
   });
   if (!parsed.success) {
@@ -108,7 +120,7 @@ export async function action({ request, params }: Route.ActionArgs) {
     model: d.model,
     timeoutSeconds: d.timeoutSeconds,
     permissions: { read: d.permissionRead, edit: d.permissionEdit, bash: d.permissionBash },
-    autoApprove: d.autoApprove,
+    egressExtraHosts: d.egressExtraHosts,
     enabled: d.enabled,
     updatedAt: new Date(),
   };
@@ -203,7 +215,7 @@ export default function AdminAgentEdit({ loaderData, actionData }: Route.Compone
                 defaultValue={permissions.read ?? "allow"}
                 fullWidth
               >
-                {["allow", "ask", "deny"].map((v) => (
+                {PERMISSION_VALUES.map((v) => (
                   <MenuItem key={v} value={v}>
                     {v}
                   </MenuItem>
@@ -216,7 +228,7 @@ export default function AdminAgentEdit({ loaderData, actionData }: Route.Compone
                 defaultValue={permissions.edit ?? "allow"}
                 fullWidth
               >
-                {["allow", "ask", "deny"].map((v) => (
+                {PERMISSION_VALUES.map((v) => (
                   <MenuItem key={v} value={v}>
                     {v}
                   </MenuItem>
@@ -229,16 +241,19 @@ export default function AdminAgentEdit({ loaderData, actionData }: Route.Compone
                 defaultValue={permissions.bash ?? "allow"}
                 fullWidth
               >
-                {["allow", "ask", "deny"].map((v) => (
+                {PERMISSION_VALUES.map((v) => (
                   <MenuItem key={v} value={v}>
                     {v}
                   </MenuItem>
                 ))}
               </TextField>
             </Stack>
-            <FormControlLabel
-              control={<Switch name="autoApprove" defaultChecked={agent?.autoApprove ?? false} />}
-              label='Automatically approve all permission requests (YOLO) — without this, any "ask" outcome (including opencode&apos;s built-in guard on secret-looking files) hangs the headless agent until it times out'
+            <TextField
+              name="egressExtraHosts"
+              label="Additional network hosts"
+              defaultValue={(agent?.egressExtraHosts ?? []).join(", ")}
+              fullWidth
+              helperText="Hostnames this agent may reach, beyond its model provider and the MCP servers selected below (those are allowed automatically). Everything else is refused. Comma-separated; a leading dot matches subdomains, e.g. .vt.edu. Web search and page fetching are never available to agents."
             />
 
             <Box>

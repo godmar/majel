@@ -51,9 +51,70 @@ docker run --rm --network host \
 
 echo "--- verdict"
 if curl -sf http://127.0.0.1:8092/verdict | jq .; then
-  echo "SMOKE TEST PASSED"
+  echo "runner contract OK"
 else
   curl -s http://127.0.0.1:8092/verdict | jq . || true
   echo "SMOKE TEST FAILED"
   exit 1
 fi
+
+# --------------------------------------------------------------- policy check
+#
+# The C2C pins webfetch/websearch/question/doom_loop to "deny" at the config
+# root precisely because opencode applies root permissions to every agent,
+# including its built-in subagents ("general", "explore") — which ship with
+# bash, webfetch and websearch allowed. If that precedence ever changes, an
+# agent could reach the network by delegating to a subagent, so assert it here
+# rather than discover it in production. See c2c/app/lib/opencode-config.server.ts.
+echo "--- checking permission policy propagates to subagents"
+
+cat > "$WORK/policy.json" <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "SmokeTest",
+  "model": "fake/fake-model",
+  "provider": {
+    "fake": {
+      "name": "Fake LLM",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "apiKey": "test-key", "baseURL": "http://127.0.0.1:8091/v1" },
+      "models": { "fake-model": { "name": "Fake Model" } }
+    }
+  },
+  "tools": { "webfetch": false, "websearch": false, "question": false },
+  "permission": {
+    "webfetch": "deny", "websearch": "deny", "question": "deny", "doom_loop": "deny"
+  },
+  "agent": { "SmokeTest": { "mode": "primary", "prompt": "test", "permission": { "bash": "allow" } } }
+}
+EOF
+
+POLICY=$(docker run --rm -d --network host \
+  -e OPENCODE_CONFIG=/etc/opencode/config.json \
+  -v "$WORK/policy.json":/etc/opencode/config.json:ro \
+  --entrypoint opencode "$IMAGE" serve --hostname 127.0.0.1 --port 4097)
+trap 'docker rm -f $POLICY >/dev/null 2>&1; kill $(jobs -p) 2>/dev/null; rm -rf "$WORK"' EXIT
+
+for i in $(seq 1 30); do
+  curl -sf http://127.0.0.1:4097/global/health >/dev/null 2>&1 && break; sleep 1
+done
+
+curl -sf http://127.0.0.1:4097/agent > "$WORK/agents.json" || {
+  echo "could not read resolved agent policy"; echo "SMOKE TEST FAILED"; exit 1; }
+
+jq -e '
+  # Last matching rule wins, so fold each agent'"'"'s ruleset down to the
+  # effective verdict for the catch-all pattern.
+  [ .[] | select(.name | IN("SmokeTest", "general", "explore")) |
+    { name: .name,
+      eff: (reduce (.permission[]? | select(.pattern == "*")) as $r ({}; .[$r.permission] = $r.action)) }
+  ]
+  | length >= 3
+  and all(.[]; .eff.webfetch == "deny" and .eff.websearch == "deny"
+               and .eff.question == "deny" and .eff.doom_loop == "deny")
+' "$WORK/agents.json" >/dev/null && echo "policy propagates to subagents OK" || {
+  echo "FAILED: denied tools are not denied for every agent:"
+  jq '[ .[] | { name, rules: [ .permission[]? | select(.pattern == "*") ] } ]' "$WORK/agents.json"
+  echo "SMOKE TEST FAILED"; exit 1; }
+
+echo "SMOKE TEST PASSED"

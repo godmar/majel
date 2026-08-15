@@ -46,6 +46,102 @@ export async function resolveApiKey(
   );
 }
 
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Hostnames this agent's pod may reach through the egress proxy. Everything
+ * not listed is refused at CONNECT time; the C2C itself is not here because
+ * the runner reaches it directly over the pod network (NO_PROXY), which the
+ * NetworkPolicy allows by pod selector.
+ *
+ * MCP servers are the per-agent part and the part that matters — they are the
+ * data the agent can touch, so an agent only gets the ones it was granted.
+ * Provider hosts are the union across enabled providers rather than just this
+ * agent's own, because a task may override the model onto another provider;
+ * they are all LLM endpoints, so the union costs little.
+ */
+export async function egressAllowlist(agent: AgentDefinition): Promise<string[]> {
+  const providerRows = await db
+    .select({ baseUrl: providers.baseUrl })
+    .from(providers)
+    .where(eq(providers.enabled, true));
+
+  const mcpRows = await db
+    .select({ url: mcpServers.url, enabled: mcpServers.enabled })
+    .from(agentMcpServers)
+    .innerJoin(mcpServers, eq(agentMcpServers.mcpServerId, mcpServers.id))
+    .where(eq(agentMcpServers.agentDefinitionId, agent.id));
+
+  const hosts = [
+    ...providerRows.map((p) => hostOf(p.baseUrl)),
+    ...mcpRows.filter((m) => m.enabled).map((m) => hostOf(m.url)),
+    ...agent.egressExtraHosts.map((h) => h.trim().toLowerCase()),
+  ];
+  return [...new Set(hosts.filter((h): h is string => Boolean(h)))].sort();
+}
+
+/**
+ * Tools an agent may never use. webfetch/websearch are the network-egress
+ * tools (the pod's egress allowlist is the real boundary, this just stops the
+ * model trying); "question" would block on a human who does not exist in a
+ * one-shot pod.
+ */
+export const DENIED_TOOLS = ["webfetch", "websearch", "question"] as const;
+
+/** opencode's HOME inside the sandbox image; must match sandbox/Dockerfile. */
+const AGENT_HOME = "/home/agent";
+
+/**
+ * Every permission key opencode 1.18 knows, spelled out.
+ *
+ * Leaving a key unset does NOT mean "allow": opencode ships built-in "ask"
+ * rules — `doom_loop`, `external_directory`, and `read` on `*.env` /
+ * `*.env.*` — and an unanswered "ask" stalls the tool call until the pod hits
+ * its deadline. Pinning every key keeps the mounted config the complete
+ * policy instead of a delta over defaults that shift between releases.
+ * `GET /agent` on a running server prints the resolved ruleset; the sandbox
+ * smoke test asserts against it.
+ */
+function renderPermissions(configured: Record<string, string>): Record<string, unknown> {
+  // Admin-configurable, "allow" | "deny" (see agent_definitions.permissions).
+  const read = configured.read ?? "allow";
+  const edit = configured.edit ?? "allow";
+  const bash = configured.bash ?? "allow";
+
+  return {
+    // A bare "allow" loses to opencode's more specific built-in `*.env` rules,
+    // so an allow has to be spelled as a pattern map to outrank them.
+    read: read === "allow" ? { "*": "allow", "*.env": "allow", "*.env.*": "allow" } : read,
+    edit,
+    bash,
+    // Read-only inspection of the workspace; these ride with read.
+    glob: read,
+    grep: read,
+    list: read,
+    lsp: read,
+    // Subagents are allowed and inherit this same policy via the root block.
+    task: "allow",
+    skill: "allow",
+    todowrite: "allow",
+    // Confine the agent to its workspace, while preserving the two paths
+    // opencode itself needs (it writes large tool results out of band).
+    external_directory: {
+      "*": "deny",
+      [`${AGENT_HOME}/.local/share/opencode/tool-output/*`]: "allow",
+      "/tmp/opencode/*": "allow",
+    },
+    // Defaults to "ask" upstream, which would hang the pod.
+    doom_loop: "deny",
+    ...Object.fromEntries(DENIED_TOOLS.map((t) => [t, "deny"])),
+  };
+}
+
 /**
  * Render the opencode.json for one task from an agent definition, its
  * allowed MCP servers, and the provider referenced by the model string
@@ -94,21 +190,7 @@ export async function renderOpencodeConfig(
     };
   }
 
-  // Missing permission keys default to "allow", matching what the agent
-  // editor displays. opencode's built-in read policy additionally gates
-  // secret-looking files ({"*.env": "ask", "*.env.*": "ask"}) even when read
-  // is generally allowed — and an unanswered "ask" hangs a headless pod — so
-  // an "allow" must be spelled as an explicit pattern map to beat those
-  // more-specific built-in patterns.
-  const permission: Record<string, unknown> = {
-    read: "allow",
-    edit: "allow",
-    bash: "allow",
-    ...agent.permissions,
-  };
-  if (permission.read === "allow") {
-    permission.read = { "*": "allow", "*.env": "allow", "*.env.*": "allow" };
-  }
+  const permission = renderPermissions(agent.permissions);
 
   return {
     $schema: "https://opencode.ai/config.json",
@@ -126,6 +208,18 @@ export async function renderOpencodeConfig(
       },
     },
     ...(Object.keys(mcp).length > 0 ? { mcp } : {}),
+    // Drop the tools we never permit from the model's tool list entirely, so
+    // it doesn't burn turns calling something that can only be refused.
+    tools: Object.fromEntries(DENIED_TOOLS.map((t) => [t, false])),
+    // A denied tool call should surface to the model as an error it can work
+    // around, not end the run.
+    experimental: { continue_loop_on_deny: true },
+    // Root scope covers every agent, including opencode's built-in subagents
+    // ("general", "explore"), whose own defaults would otherwise apply — they
+    // ship with bash/webfetch/websearch allowed. Resolution order is
+    // built-in defaults -> native agent defaults -> root -> per-agent, so
+    // this beats the natives while the block below still wins for our agent.
+    permission,
     agent: {
       [agent.name]: {
         mode: "primary",

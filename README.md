@@ -23,6 +23,7 @@ Deployment manifests are in `deploy/` (namespace `vtlib` on the endeavour cluste
 |---|---|
 | `c2c/` | React Router v7 app (UI + machine API), Drizzle ORM, K8s job launcher |
 | `sandbox/` | Sandbox container image + runner script |
+| `egress-proxy/` | Allowlist proxy: the only route off the cluster for agent pods |
 | `deploy/` | Kubernetes manifests and deployment runbook |
 | `docs/` | Machine API reference for external applications |
 | `opencode-master-config/` | Reference opencode configuration (the real `opencode.jsonc` is gitignored — it contains credentials) |
@@ -81,6 +82,52 @@ image fresh on every launch, so tasks created after the push see the new files
 immediately — no cluster restart needed. Tasks already running keep the files they started
 with. (The build stages the directory into gitignored `sandbox/home/`; never
 edit that copy.)
+
+## Agent sandboxing
+
+Agents run untrusted output from a model against real data, so the pod is
+treated as the boundary rather than the model's good behavior.
+
+**Permissions.** Each agent definition carries `read` / `edit` / `bash`, each
+`allow` or `deny`. There is deliberately no `ask`: nothing can answer a prompt
+in a one-shot pod, so an `ask` is only a `deny` that first burns the agent's
+whole timeout. `renderOpencodeConfig()` turns those three settings into a
+policy covering *every* permission key opencode knows, because leaving a key
+unset does not mean "allow" — opencode ships built-in `ask` rules for
+`doom_loop`, `external_directory`, and reads of `*.env` files, each of which
+would hang a headless pod.
+
+`webfetch`, `websearch`, and `question` are always denied and also removed
+from the model's tool list, so the model never attempts them. The policy is
+emitted at the config root as well as per agent: opencode's built-in
+subagents (`general`, `explore`) ship with bash and network tools allowed, and
+without the root block a primary agent could reach the network by delegating
+to one. `sandbox/test/smoke.sh` asserts this against a live opencode; run it
+after any opencode upgrade.
+
+Anything opencode still stops to ask about is **refused** by the runner and
+recorded as a task event. That is a liveness guard, not the policy — it turns
+an unanticipated request from a 30-minute timeout into an immediate tool
+error, and the event tells you which gap to close.
+
+**Network.** Agent pods have no route off the cluster except an HTTP CONNECT
+proxy that tunnels only to hostnames on that agent's allowlist — its model
+provider, the MCP servers it was granted, plus any extra hosts an admin adds
+under **Additional network hosts**. Denying `webfetch` alone would not be
+worth much, since the `bash` tool can run `curl`; the NetworkPolicy is what
+makes it stick.
+
+The allowlist travels with the pod inside its signed proxy password, so the
+proxy stays stateless and egress keeps working while the C2C is redeploying.
+The NetworkPolicy names no IPs — agent pods may reach three *pod selectors*
+(kube-dns, the C2C, the proxy), and hostname matching happens in the proxy at
+connection time, so allowlisted services can renumber freely.
+
+Two limits worth knowing. Hosts sharing an ingress are not distinguishable:
+an agent allowed to reach one vhost can send another `Host` header over the
+same tunnel, which separating them would require intercepting TLS to prevent.
+And kube-dns remains reachable, so DNS stays available as a low-bandwidth
+side channel.
 
 ## Concurrency limits (per LLM API key)
 

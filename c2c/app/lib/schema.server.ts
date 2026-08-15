@@ -87,13 +87,16 @@ export const agentDefinitions = pgTable("agent_definitions", {
   description: text("description"),
   systemPrompt: text("system_prompt").notNull(),
   model: text("model").notNull(), // "<provider>/<modelID>"
+  // "allow" | "deny" per key. There is no "ask": nobody can answer in a
+  // one-shot pod, so an ask is just a deny that costs a timeout first.
   permissions: jsonb("permissions")
     .$type<Record<string, string>>()
     .notNull()
     .default({ read: "allow", edit: "allow", bash: "allow" }),
-  // Runner auto-approves every opencode permission request ("ask" outcomes
-  // hang forever in a headless pod otherwise).
-  autoApprove: boolean("auto_approve").notNull().default(false),
+  // Extra hostnames this agent's pod may reach through the egress proxy, on
+  // top of the ones implied by its model provider and MCP servers. Everything
+  // else is refused — see egressAllowlist() in opencode-config.server.ts.
+  egressExtraHosts: jsonb("egress_extra_hosts").$type<string[]>().notNull().default([]),
   timeoutSeconds: integer("timeout_seconds").notNull().default(1800),
   enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

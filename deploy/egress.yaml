@@ -1,0 +1,110 @@
+# Sandbox egress: the proxy agent pods must route through, and the
+# NetworkPolicy that leaves them no alternative.
+#
+# Note there is not a single IP address or CIDR here. Agent pods are permitted
+# to talk to three *pod selectors* — DNS, the C2C, the proxy — and the
+# hostname allowlist lives in the proxy, matched on the CONNECT host and
+# resolved per connection. Allowlisted services can renumber without anything
+# here changing.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sandbox-egress
+  namespace: vtlib
+  labels:
+    app: sandbox-egress
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sandbox-egress
+  template:
+    metadata:
+      labels:
+        app: sandbox-egress
+    spec:
+      imagePullSecrets:
+        - name: registry-secret
+      containers:
+        - name: proxy
+          image: container.cs.vt.edu/gback/registry/sandbox-egress:latest
+          imagePullPolicy: Always
+          env:
+            - name: EGRESS_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: c2c-env
+                  key: SANDBOX_EGRESS_SIGNING_KEY
+          ports:
+            - containerPort: 3128
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sandbox-egress
+  namespace: vtlib
+spec:
+  selector:
+    app: sandbox-egress
+  ports:
+    - port: 3128
+      targetPort: 3128
+---
+# Default-deny egress for agent pods, with three exceptions. Ingress is denied
+# outright: nothing should ever connect *to* an agent pod.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: opencode-agent-egress
+  namespace: vtlib
+spec:
+  podSelector:
+    matchLabels:
+      app: opencode-agent
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    # DNS. Agent pods still resolve cluster names; external names are resolved
+    # by the proxy, not here. This does leave kube-dns's upstream forwarder
+    # reachable, which is a low-bandwidth channel we accept.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The C2C, for the runner's callbacks (input, transcript, results). The
+    # runner is Node and ignores proxy env vars, so this must be direct.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: c2c
+      ports:
+        - protocol: TCP
+          port: 3000
+    # Everything else off-cluster, via the proxy and only if allowlisted.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: sandbox-egress
+      ports:
+        - protocol: TCP
+          port: 3128

@@ -17,7 +17,7 @@ RUN pip3 install --no-cache-dir --break-system-packages \
 
 # The runner depends on opencode's server API; update via
 # sandbox/update-opencode.sh, which smoke-tests the new version before push.
-ARG OPENCODE_VERSION=1.17.15
+ARG OPENCODE_VERSION=1.18.18
 RUN npm install -g opencode-ai@${OPENCODE_VERSION} && npm cache clean --force
 
 RUN useradd -m -u 1001 agent && mkdir -p /workspace && chown agent:agent /workspace
@@ -30,6 +30,26 @@ RUN opencode serve --hostname 127.0.0.1 --port 4600 & \
     for i in $(seq 1 30); do \
       curl -sf http://127.0.0.1:4600/global/health >/dev/null && break; sleep 1; \
     done; kill %1 2>/dev/null; true
+
+# Bake opencode's plugin dependency tree into the image.
+#
+# `opencode serve` above does not install it — that happens the first time a
+# session runs, which without this step meant every agent pod pulling ~30
+# packages from registry.npmjs.org at startup. Pods have no egress to npm
+# (see deploy/egress.yaml), so the install has to happen here or not at all.
+#
+# The install runs before the first model call, so pointing the provider at an
+# unresolvable host is enough to trigger it: the run then fails at the LLM
+# call, which is the intended outcome. `--pure` does not skip the install.
+RUN printf '%s' '{ \
+  "$schema": "https://opencode.ai/config.json", \
+  "model": "warmup/warmup", \
+  "provider": { "warmup": { "name": "warmup", "npm": "@ai-sdk/openai-compatible", \
+    "options": { "apiKey": "x", "baseURL": "https://warmup.invalid/v1" }, \
+    "models": { "warmup": { "name": "warmup" } } } } }' > /tmp/warmup.json \
+    && OPENCODE_CONFIG=/tmp/warmup.json opencode run --model warmup/warmup hi >/dev/null 2>&1 || true; \
+    rm -f /tmp/warmup.json; \
+    test -d "$HOME/.config/opencode/node_modules" || { echo "plugin warm-up failed"; exit 1; }
 
 COPY runner/ /opt/runner/
 

@@ -8,8 +8,6 @@
  *   CC_BEARER_TOKEN  bearer token for the C2C machine API
  *   OPENCODE_CONFIG  path to the rendered opencode.json (mounted secret)
  *   TASK_TIMEOUT_SECONDS  optional wall-clock budget (default 1800)
- *   AUTO_APPROVE_PERMISSIONS  "true" to auto-approve opencode permission
- *                    requests, which otherwise hang forever headless
  *
  * Flow: fetch input -> write files -> snapshot workspace -> start
  * `opencode serve` -> create session -> prompt (async) -> live transcript
@@ -29,7 +27,6 @@ const WORKSPACE = process.env.WORKSPACE ?? "/workspace";
 const OC_PORT = Number(process.env.OPENCODE_PORT ?? 4096);
 const OC_URL = `http://127.0.0.1:${OC_PORT}`;
 const TIMEOUT_MS = Number(process.env.TASK_TIMEOUT_SECONDS ?? 1800) * 1000;
-const AUTO_APPROVE = process.env.AUTO_APPROVE_PERMISSIONS === "true";
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const SKIP_DIRS = new Set(["node_modules", ".git", ".venv", "__pycache__", ".opencode", ".cache"]);
@@ -154,18 +151,43 @@ async function fetchTranscript(sessionID) {
 }
 
 /**
- * Approve pending opencode permission requests ("always", so repeats don't
- * ask again). Nobody can answer them in a headless pod — an unanswered "ask"
- * stalls the tool call until the task times out — and the sandbox pod is the
- * actual security boundary here.
+ * Refuse anything opencode stops to ask about.
+ *
+ * This is a liveness guard, not the policy: policy lives in the rendered
+ * opencode config, which pins every permission key to allow or deny, so a
+ * correctly configured agent never gets here. What does get here is whatever
+ * the policy did not anticipate — an MCP tool under a name we do not
+ * enumerate, a permission key added by a future opencode. Nobody can answer
+ * in a one-shot pod, and an unanswered request stalls the tool call until the
+ * task hits its deadline; refusing turns a 30-minute timeout into an
+ * immediate tool error the agent can work around. Each refusal is reported as
+ * a task event, because it means the policy has a gap worth closing.
  */
-async function approvePendingPermissions() {
-  const pending = await (await oc("/permission", { timeoutMs: 5000 })).json();
-  for (const req of pending) {
-    await oc(`/permission/${req.id}/reply`, { method: "POST", json: { reply: "always" } });
+async function rejectPendingRequests() {
+  const permissions = await (await oc("/permission", { timeoutMs: 5000 })).json();
+  for (const req of permissions) {
     const what = `${req.permission} ${(req.patterns ?? []).join(", ")}`.trim();
-    console.log(`auto-approved permission request: ${what}`);
-    await postEvent("permission_auto_approved", `Auto-approved permission request: ${what}`);
+    await oc(`/permission/${req.id}/reply`, {
+      method: "POST",
+      json: {
+        reply: "reject",
+        message: `Refused by sandbox policy: "${req.permission}" is not permitted for this agent.`,
+      },
+    });
+    console.log(`refused permission request: ${what}`);
+    await postEvent("permission_refused", `Refused permission request: ${what}`, {
+      permission: req.permission,
+      patterns: req.patterns ?? [],
+    });
+  }
+
+  // Questions are a separate API from permissions and need their own refusal;
+  // the config denies the tool, so reaching this means the deny was bypassed.
+  const questions = await (await oc("/question", { timeoutMs: 5000 })).json();
+  for (const req of questions) {
+    await oc(`/question/${req.id}/reject`, { method: "POST" });
+    console.log(`refused question request ${req.id}`);
+    await postEvent("question_refused", "Refused a question: tasks run unattended.");
   }
 }
 
@@ -254,18 +276,16 @@ async function main() {
   });
   await postEvent("prompt_sent", "Prompt submitted to agent");
 
-  // 5. Live transcript sync (and permission auto-approval) while waiting
-  // for completion
+  // 5. Live transcript sync (and refusal of anything opencode asks about)
+  // while waiting for completion
   let syncing = true;
   const syncLoop = (async () => {
     while (syncing) {
       await sleep(3000);
-      if (AUTO_APPROVE) {
-        try {
-          await approvePendingPermissions();
-        } catch (err) {
-          console.error("permission auto-approval failed:", err.message);
-        }
+      try {
+        await rejectPendingRequests();
+      } catch (err) {
+        console.error("refusing pending requests failed:", err.message);
       }
       try {
         const transcript = await fetchTranscript(session.id);

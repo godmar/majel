@@ -25,6 +25,8 @@ All commands assume `KUBECONFIG=endeavour.yaml` (repo root) or `--kubeconfig end
      --from-literal=CC_INTERNAL_URL="http://c2c.vtlib.svc.cluster.local:3000" \
      --from-literal=K8S_NAMESPACE="vtlib" \
      --from-literal=SANDBOX_CONTAINER_IMAGE="container.cs.vt.edu/gback/registry/opencode-sandbox:latest" \
+     --from-literal=SANDBOX_EGRESS_PROXY="http://sandbox-egress.vtlib.svc.cluster.local:3128" \
+     --from-literal=SANDBOX_EGRESS_SIGNING_KEY="$(openssl rand -base64 32)" \
      --from-literal=LLM_API_BASE_URL="https://llm-api.arc.vt.edu/api/v1" \
      --from-literal=LLM_API_KEY="<from .env>"
 
@@ -42,6 +44,8 @@ docker build -t container.cs.vt.edu/gback/registry/agent-supervisor:latest c2c/
 docker push container.cs.vt.edu/gback/registry/agent-supervisor:latest
 docker build -t container.cs.vt.edu/gback/registry/opencode-sandbox:latest sandbox/
 docker push container.cs.vt.edu/gback/registry/opencode-sandbox:latest
+docker build -t container.cs.vt.edu/gback/registry/sandbox-egress:latest egress-proxy/
+docker push container.cs.vt.edu/gback/registry/sandbox-egress:latest
 ```
 
 ## Deploy
@@ -49,7 +53,20 @@ docker push container.cs.vt.edu/gback/registry/opencode-sandbox:latest
 ```sh
 kubectl apply -f deploy/postgres.yaml
 kubectl apply -f deploy/c2c.yaml
+kubectl apply -f deploy/egress.yaml
 kubectl apply -f deploy/ingress.yaml
+```
+
+`deploy/egress.yaml` must be applied before agent pods are useful: it carries
+both the egress proxy and the NetworkPolicy that leaves agent pods no other
+route out. Applying the NetworkPolicy without a running proxy (or with
+`SANDBOX_EGRESS_*` unset in `c2c-env`) leaves agents with no external network,
+so tasks fail at the first model call rather than silently escaping the policy.
+
+Verify the policy is being enforced:
+
+```sh
+kubectl -n vtlib logs deploy/sandbox-egress --tail=50   # one JSON line per CONNECT
 ```
 
 Database migrations run automatically when the C2C pod starts. Seed the

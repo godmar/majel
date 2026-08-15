@@ -28,6 +28,11 @@ const schema = z.object({
   SANDBOX_CONTAINER_IMAGE: z.string().default(""),
   // Optional placement constraint for agent pods: "key=value,key2=value2".
   SANDBOX_NODE_SELECTOR: z.string().default(""),
+  // Egress proxy the agent pods must route through. Both must be set for
+  // agent pods to reach anything outside the cluster; the signing key is
+  // shared with the proxy, which rejects credentials it cannot verify.
+  SANDBOX_EGRESS_PROXY: z.string().default(""),
+  SANDBOX_EGRESS_SIGNING_KEY: z.string().default(""),
 
   LLM_API_BASE_URL: z.string().default(""),
 
