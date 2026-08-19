@@ -4,11 +4,15 @@
  * contains credentials) when that file is present; otherwise falls back to
  * LLM_API_BASE_URL / LLM_API_KEY from the environment.
  *
+ * Safe to re-run when the master config changes: the provider catalog is
+ * upstream-owned and gets overwritten, so a new set of models lands with one
+ * command, while agents that already exist are left exactly as the admin UI
+ * has them.
+ *
  * Run with: npm run db:seed
  */
 import fs from "node:fs";
 import path from "node:path";
-import { eq } from "drizzle-orm";
 import { db } from "../app/lib/db.server";
 import { env } from "../app/lib/env.server";
 import {
@@ -44,6 +48,27 @@ function loadMasterConfig(): { config: MasterConfig; dir: string } | null {
   const file = path.join(dir, "opencode.jsonc");
   if (!fs.existsSync(file)) return null;
   return { config: JSON.parse(stripJsonComments(fs.readFileSync(file, "utf8"))), dir };
+}
+
+/**
+ * A model can vanish from the master config while an agent still names it as
+ * its default. The task would fail at the first model call with an opaque
+ * provider error, so say so here instead.
+ */
+async function warnOnRetiredModels() {
+  const catalog = new Set(
+    (await db.select({ name: providers.name, models: providers.models }).from(providers)).flatMap(
+      (p) => p.models.map((m) => `${p.name}/${m.id}`),
+    ),
+  );
+  const agents = await db
+    .select({ name: agentDefinitions.name, model: agentDefinitions.model })
+    .from(agentDefinitions);
+  for (const a of agents) {
+    if (!catalog.has(a.model)) {
+      console.warn(`WARNING: agent "${a.name}" uses ${a.model}, which no provider offers`);
+    }
+  }
 }
 
 async function main() {
@@ -104,25 +129,32 @@ async function main() {
     if (fileRef && master) {
       prompt = fs.readFileSync(path.resolve(master.dir, fileRef[1]), "utf8").trim();
     }
-    const values = {
-      name,
-      description: "Seeded from opencode-master-config",
-      systemPrompt: prompt,
-      model: master?.config.model ?? "vt-openwebui/GLM-5.2",
-      permissions: a.permission ?? { edit: "allow", bash: "allow" },
-    };
+    // Agents are bootstrapped once and edited in the admin UI from then on.
+    // The master config cannot know about those edits, so re-running the seed
+    // to pick up a new model catalog must leave existing agents alone.
     const [agent] = await db
       .insert(agentDefinitions)
-      .values(values)
-      .onConflictDoUpdate({ target: agentDefinitions.name, set: values })
+      .values({
+        name,
+        description: "Seeded from opencode-master-config",
+        systemPrompt: prompt,
+        model: master?.config.model ?? "vt-openwebui/GLM-5.2",
+        permissions: a.permission ?? { edit: "allow", bash: "allow" },
+      })
+      .onConflictDoNothing({ target: agentDefinitions.name })
       .returning();
+    if (!agent) {
+      console.log(`agent: ${name} (already exists, left unchanged)`);
+      continue;
+    }
     console.log(`agent: ${name}`);
 
-    await db.delete(agentMcpServers).where(eq(agentMcpServers.agentDefinitionId, agent.id));
     for (const id of mcpIds.values()) {
       await db.insert(agentMcpServers).values({ agentDefinitionId: agent.id, mcpServerId: id });
     }
   }
+
+  await warnOnRetiredModels();
 
   console.log("seed complete");
   process.exit(0);

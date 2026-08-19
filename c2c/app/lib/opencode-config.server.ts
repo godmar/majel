@@ -9,14 +9,27 @@ import {
   type Provider,
 } from "./schema.server";
 
-/** Provider referenced by a "<provider>/<modelID>" model string. */
+/**
+ * Provider referenced by a "<provider>/<modelID>" model string, with the
+ * model ID checked against that provider's catalog. Models come and go as the
+ * VT endpoint rotates them; catching a retired one here turns what would be
+ * an opaque provider error inside the pod into a rejection at task creation.
+ */
 export async function providerForModel(model: string): Promise<Provider> {
-  const [providerName] = model.split("/", 1);
+  const slash = model.indexOf("/");
+  const providerName = slash === -1 ? model : model.slice(0, slash);
+  const modelId = slash === -1 ? "" : model.slice(slash + 1);
   const provider = await db.query.providers.findFirst({
     where: eq(providers.name, providerName),
   });
   if (!provider || !provider.enabled) {
     throw new Error(`model "${model}" references unknown or disabled provider "${providerName}"`);
+  }
+  if (!provider.models.some((m) => m.id === modelId)) {
+    const known = provider.models.map((m) => m.id).join(", ") || "(none configured)";
+    throw new Error(
+      `provider "${providerName}" offers no model "${modelId}". Available: ${known}`,
+    );
   }
   return provider;
 }

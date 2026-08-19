@@ -74,6 +74,13 @@ initial provider/MCP/agent config either through the admin UI or by running
 `npm run db:seed` locally with `DATABASE_URL` pointed at the cluster DB
 (e.g. via `kubectl port-forward svc/c2c-postgres 5433:5432`).
 
+Re-run the seed whenever `opencode-master-config/opencode.jsonc` gains or
+loses models: the provider catalog is upstream-owned and is overwritten, while
+agents already in the database are left alone (they are edited in the admin UI,
+and the master config cannot know about those edits). Retiring a model that an
+agent still names as its default is reported as a warning; fix it in the admin
+UI, because task creation rejects a model the provider no longer offers.
+
 ## Updating opencode
 
 The sandbox pins its opencode version; the runner depends on opencode's
