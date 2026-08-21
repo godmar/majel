@@ -68,6 +68,17 @@ function hostOf(url: string): string | null {
 }
 
 /**
+ * Reachable by every agent, regardless of what it was granted. The Python
+ * package index is here because agents are expected to write and run Python,
+ * and the image cannot pre-install every library a task might want; pip pulls
+ * the index from pypi.org and the wheels themselves from files.pythonhosted.org.
+ *
+ * This widens what code can enter a pod, but not what a pod can reach: an
+ * installed package is still confined to the same allowlist as everything else.
+ */
+const BASE_EGRESS_HOSTS = ["pypi.org", "files.pythonhosted.org"];
+
+/**
  * Hostnames this agent's pod may reach through the egress proxy. Everything
  * not listed is refused at CONNECT time; the C2C itself is not here because
  * the runner reaches it directly over the pod network (NO_PROXY), which the
@@ -92,6 +103,7 @@ export async function egressAllowlist(agent: AgentDefinition): Promise<string[]>
     .where(eq(agentMcpServers.agentDefinitionId, agent.id));
 
   const hosts = [
+    ...BASE_EGRESS_HOSTS,
     ...providerRows.map((p) => hostOf(p.baseUrl)),
     ...mcpRows.filter((m) => m.enabled).map((m) => hostOf(m.url)),
     ...agent.egressExtraHosts.map((h) => h.trim().toLowerCase()),

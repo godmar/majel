@@ -56,6 +56,28 @@ check "expired credential"                  deny  "$(mint '["example.com"]' -10)
 check "credential with a broken signature"  deny  "$(mint '["example.com"]' 3600)X"
 check "no credential at all"                deny  ""
 
+# The reason a request was refused has to reach the agent, which mostly means
+# python: http.client puts the proxy's reason phrase into the exception it
+# raises, so a blocked host reads as a policy decision and not a network fault.
+explains() { # <description> <expected substring>
+  local desc=$1 want=$2 out
+  out=$(https_proxy="http://agent:$(mint '["example.com"]' 3600)@127.0.0.1:$PORT" \
+    python3 -c 'import requests,sys
+try:
+    requests.get("https://elsewhere.test/", timeout=20)
+except Exception as e:
+    sys.stdout.write(str(e))' 2>/dev/null || true)
+  if [[ "$out" == *"$want"* ]]; then
+    echo "  ok    $desc"
+  else
+    echo "  FAIL  $desc (wanted \"$want\" in: $out)"
+    FAILED=1
+  fi
+}
+
+explains "python sees why it was refused"    "not on this agent's egress allowlist"
+explains "python is told what is allowed"    "allowed: example.com"
+
 if [ $FAILED -ne 0 ]; then
   echo "PROXY TEST FAILED"; cat /tmp/egress-test.$$.log; exit 1
 fi

@@ -82,19 +82,52 @@ server.on("connect", (req, clientSocket, head) => {
   clientSocket.on("error", () => clientSocket.destroy());
 
   const separator = req.url.lastIndexOf(":");
-  const host = req.url.slice(0, separator);
+  // Refusals echo the host back in a status line, so strip anything that could
+  // break out of it into a header of the attacker's choosing.
+  const host = req.url.slice(0, separator).replace(/[^\w.:\[\]-]/g, "");
   const port = Number(req.url.slice(separator + 1));
 
-  const refuse = (reason, code = "403 Forbidden") => {
+  // A bare "403" told the agent nothing, so a blocked host looked like a bug in
+  // whatever it was calling. Both the reason phrase and the body explain the
+  // refusal: python's http.client surfaces the phrase verbatim ("Tunnel
+  // connection failed: 403 ..."), and curl -v prints the body.
+  const refuse = (reason, detail, code = 403, phrase = "Forbidden") => {
     log({ verdict: "deny", reason, host, port });
-    clientSocket.end(`HTTP/1.1 ${code}\r\n\r\n`);
+    const body = `egress proxy: ${detail}\n`;
+    clientSocket.end(
+      [
+        `HTTP/1.1 ${code} ${phrase} - ${detail}`,
+        "Content-Type: text/plain",
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        "Connection: close",
+        "",
+        body,
+      ].join("\r\n"),
+    );
   };
 
   const grant = grantFor(req);
-  if (!grant) return refuse("bad-credential", "407 Proxy Authentication Required");
-  if (grant.expires < Date.now() / 1000) return refuse("expired");
-  if (!ALLOWED_PORTS.has(port)) return refuse("port");
-  if (!permitted(grant, host)) return refuse("not-allowlisted");
+  if (!grant) {
+    return refuse(
+      "bad-credential",
+      "missing or invalid proxy credential",
+      407,
+      "Proxy Authentication Required",
+    );
+  }
+  if (grant.expires < Date.now() / 1000) {
+    return refuse("expired", "this pod's egress credential has expired");
+  }
+  if (!ALLOWED_PORTS.has(port)) {
+    return refuse("port", `only port 443 is permitted, not ${port}`);
+  }
+  if (!permitted(grant, host)) {
+    return refuse(
+      "not-allowlisted",
+      `${host} is not on this agent's egress allowlist (allowed: ${grant.hosts.join(", ")}). ` +
+        `Reach it through an MCP tool, or have an admin add it to the agent's extra hosts.`,
+    );
+  }
 
   const upstream = net.connect(port, host, () => {
     log({ verdict: "allow", host, port });

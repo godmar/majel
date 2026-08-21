@@ -253,7 +253,7 @@ export default function AdminAgentEdit({ loaderData, actionData }: Route.Compone
               label="Additional network hosts"
               defaultValue={(agent?.egressExtraHosts ?? []).join(", ")}
               fullWidth
-              helperText="Hostnames this agent may reach, beyond its model provider and the MCP servers selected below (those are allowed automatically). Everything else is refused. Comma-separated; a leading dot matches subdomains, e.g. .vt.edu. Web search and page fetching are never available to agents."
+              helperText="Hostnames this agent may reach, beyond its model provider, the Python package index, and the MCP servers selected below (those are allowed automatically). Everything else is refused, and the agent is told which host was blocked. Comma-separated; a leading dot matches subdomains, e.g. .vt.edu. Web search and page fetching are never available to agents."
             />
 
             <Box>

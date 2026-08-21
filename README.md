@@ -112,10 +112,15 @@ error, and the event tells you which gap to close.
 
 **Network.** Agent pods have no route off the cluster except an HTTP CONNECT
 proxy that tunnels only to hostnames on that agent's allowlist — its model
-provider, the MCP servers it was granted, plus any extra hosts an admin adds
-under **Additional network hosts**. Denying `webfetch` alone would not be
-worth much, since the `bash` tool can run `curl`; the NetworkPolicy is what
-makes it stick.
+provider, the Python package index, the MCP servers it was granted, plus any
+extra hosts an admin adds under **Additional network hosts**. Denying
+`webfetch` alone would not be worth much, since the `bash` tool can run
+`curl`; the NetworkPolicy is what makes it stick.
+
+A refusal names the host it blocked and lists what the agent may reach, in
+both the reason phrase and the body, so a blocked call reads as a policy
+decision rather than a network fault — python surfaces the reason phrase in
+the exception it raises, which is where agents usually meet this.
 
 The allowlist travels with the pod inside its signed proxy password, so the
 proxy stays stateless and egress keeps working while the C2C is redeploying.
