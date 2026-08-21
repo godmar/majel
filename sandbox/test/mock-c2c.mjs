@@ -60,6 +60,17 @@ const server = http.createServer(async (req, res) => {
     return json(res, v.pass ? 200 : 500, v);
   }
 
+  // Raw record of the run, for scenarios whose expectations differ from the
+  // happy-path verdict (a stalled turn that recovers, or one that does not).
+  if (url.pathname === "/state") {
+    return json(res, 200, {
+      events: state.events.map((e) => e.type),
+      result: state.result,
+      files: state.files.map((f) => f.filename),
+      transcriptSyncs: state.transcriptSyncs,
+    });
+  }
+
   const auth = req.headers.authorization ?? "";
   if (auth !== `Bearer ${TOKEN}`) {
     state.authFailures++;

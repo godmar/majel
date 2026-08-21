@@ -110,6 +110,14 @@ recorded as a task event. That is a liveness guard, not the policy — it turns
 an unanticipated request from a 30-minute timeout into an immediate tool
 error, and the event tells you which gap to close.
 
+The runner also guards the other end of a turn. A provider that accepts a
+request and streams nothing back leaves opencode with a completed turn holding
+no parts, which is indistinguishable from finishing unless you look — the run
+would be reported as a success whose result was whatever the agent last said
+mid-thought. The runner retries such a turn once (a `turn_stalled` event
+records it; the session history is intact, so the agent resumes rather than
+restarts) and fails the task outright if the retry is empty too.
+
 **Python.** Agents are expected to write and run Python, so the image ships
 the libraries the work keeps needing: pandas, numpy, matplotlib, requests,
 `openpyxl` for producing spreadsheets, and `pdfplumber`/`pypdf` for reading

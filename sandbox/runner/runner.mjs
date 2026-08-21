@@ -29,6 +29,18 @@ const OC_URL = `http://127.0.0.1:${OC_PORT}`;
 const TIMEOUT_MS = Number(process.env.TASK_TIMEOUT_SECONDS ?? 1800) * 1000;
 
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
+
+// A turn that completes having produced nothing is the provider dropping the
+// request, not the agent finishing. Observed twice in production as ~181s
+// with zero tokens in and out and finish "unknown", both times immediately
+// after an unusually long turn. The session history survives it, so nudging
+// the agent to continue recovers the run; only a second empty turn is fatal.
+const MAX_STALL_RETRIES = 1;
+const STALL_RETRY_DELAY_MS = 5000;
+const STALL_RETRY_PROMPT =
+  "Your previous response came back empty. That was a transport failure, not " +
+  "anything you did wrong. Continue the task from where you left off — do not " +
+  "start over, and do not repeat work you have already done.";
 const SKIP_DIRS = new Set(["node_modules", ".git", ".venv", "__pycache__", ".opencode", ".cache"]);
 
 function requireEnv(name) {
@@ -206,13 +218,39 @@ function extractResultText(transcript) {
 }
 
 /**
+ * True when a completed turn contains nothing at all — no text, no tool call,
+ * no reasoning. That is never a valid way for the agent to finish, so it must
+ * not be mistaken for an answer: extractResultText would happily walk back
+ * past it and report whatever the agent last said mid-thought as the result.
+ */
+function turnProducedNothing(msg) {
+  return !(msg?.parts ?? []).some(
+    (p) =>
+      p?.type === "tool" ||
+      ((p?.type === "text" || p?.type === "reasoning") &&
+        typeof p.text === "string" &&
+        p.text.trim() !== ""),
+  );
+}
+
+/** Human-readable summary of an empty turn, for the failure and the event. */
+function describeStall(info) {
+  const { created, completed } = info?.time ?? {};
+  const secs = created && completed ? `, ${Math.round((completed - created) / 1000)}s` : "";
+  return `finish "${info?.finish ?? "none"}"${secs}, ${info?.tokens?.output ?? 0} output tokens`;
+}
+
+/**
  * Poll the transcript until the agent loop finishes. A turn is complete when
  * the newest message is an assistant message with time.completed set and a
  * finish reason other than "tool-calls" (which just means another step is
  * coming). The /api/session/{id}/wait endpoint is unreliable in opencode
  * 1.17.x (returns 503), so completion is derived from messages instead.
+ *
+ * afterLength ignores a transcript that has not yet grown past what the caller
+ * already saw, so a retry cannot immediately re-read the turn it is retrying.
  */
-async function waitForCompletion(sessionID, deadline) {
+async function waitForCompletion(sessionID, deadline, afterLength = 0) {
   while (Date.now() < deadline) {
     await sleep(2000);
     let transcript;
@@ -222,6 +260,7 @@ async function waitForCompletion(sessionID, deadline) {
       console.error("transcript poll failed:", err.message);
       continue;
     }
+    if (transcript.length <= afterLength) continue;
     const info = transcript.at(-1)?.info;
     if (info?.role !== "assistant") continue;
     if (info.error) {
@@ -232,6 +271,44 @@ async function waitForCompletion(sessionID, deadline) {
     }
   }
   throw new Error(`task exceeded time budget (${Math.round(TIMEOUT_MS / 1000)}s)`);
+}
+
+/**
+ * Drive the session until it produces a real answer.
+ *
+ * An empty turn used to end the run silently: the runner reported success and
+ * the task showed the agent's last mid-thought sentence as its result. Retry
+ * it once — the history is intact, so the agent resumes where it stopped —
+ * and if the retry comes back empty too, fail loudly rather than hand back a
+ * plan as though it were the work.
+ */
+async function runToCompletion(sessionID, deadline) {
+  let seen = 0;
+  for (let attempt = 0; ; attempt++) {
+    const transcript = await waitForCompletion(sessionID, deadline, seen);
+    const last = transcript.at(-1);
+    if (!turnProducedNothing(last)) return transcript;
+
+    const detail = describeStall(last?.info);
+    if (attempt >= MAX_STALL_RETRIES) {
+      throw new Error(
+        `the model returned an empty response and did not recover after ${attempt} ` +
+          `retry: the run stopped before finishing (${detail})`,
+      );
+    }
+
+    console.error(`empty response from the model (${detail}); asking the agent to continue`);
+    await postEvent("turn_stalled", `Model returned an empty response (${detail}); retrying.`, {
+      finish: last?.info?.finish ?? null,
+      attempt: attempt + 1,
+    });
+    seen = transcript.length;
+    await sleep(STALL_RETRY_DELAY_MS);
+    await oc(`/session/${sessionID}/prompt_async`, {
+      method: "POST",
+      json: { parts: [{ type: "text", text: STALL_RETRY_PROMPT }] },
+    });
+  }
 }
 
 // --------------------------------------------------------------------- main
@@ -302,7 +379,7 @@ async function main() {
 
   let transcript;
   try {
-    transcript = await waitForCompletion(session.id, deadline);
+    transcript = await runToCompletion(session.id, deadline);
   } finally {
     syncing = false;
     await syncLoop;

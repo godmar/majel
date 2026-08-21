@@ -35,28 +35,74 @@ cat > "$WORK/config.json" <<'EOF'
 }
 EOF
 
-node "$DIR/fake-llm.mjs" &
-CC_BEARER_TOKEN=$TOKEN TASK_ID=$TASK_ID node "$DIR/mock-c2c.mjs" &
-sleep 1
+# One run of the image against fresh fake-llm/mock-c2c processes, so no state
+# leaks between scenarios. Sets STATE (mock-c2c's record of the run) and
+# VERDICT_CODE; the runner is allowed to exit non-zero, since one scenario
+# expects exactly that.
+run_scenario() { # <fake-llm mode>
+  FAKE_LLM_MODE=$1 node "$DIR/fake-llm.mjs" > "$WORK/fake-llm.log" 2>&1 &
+  local llm_pid=$!
+  CC_BEARER_TOKEN=$TOKEN TASK_ID=$TASK_ID node "$DIR/mock-c2c.mjs" > "$WORK/mock-c2c.log" 2>&1 &
+  local cc_pid=$!
+  sleep 1
+
+  docker run --rm --network host \
+    -e TASK_ID=$TASK_ID \
+    -e CC_API_URL=http://127.0.0.1:8092 \
+    -e CC_BEARER_TOKEN=$TOKEN \
+    -e OPENCODE_CONFIG=/etc/opencode/config.json \
+    -e TASK_TIMEOUT_SECONDS=180 \
+    -v "$WORK/config.json":/etc/opencode/config.json:ro \
+    "$IMAGE" || true
+
+  STATE=$(curl -s http://127.0.0.1:8092/state)
+  VERDICT_CODE=$(curl -s -o "$WORK/verdict.json" -w '%{http_code}' http://127.0.0.1:8092/verdict)
+  kill $llm_pid $cc_pid 2>/dev/null || true
+  wait $llm_pid $cc_pid 2>/dev/null || true
+}
 
 echo "--- running sandbox image $IMAGE"
-docker run --rm --network host \
-  -e TASK_ID=$TASK_ID \
-  -e CC_API_URL=http://127.0.0.1:8092 \
-  -e CC_BEARER_TOKEN=$TOKEN \
-  -e OPENCODE_CONFIG=/etc/opencode/config.json \
-  -e TASK_TIMEOUT_SECONDS=180 \
-  -v "$WORK/config.json":/etc/opencode/config.json:ro \
-  "$IMAGE"
+run_scenario normal
 
 echo "--- verdict"
-if curl -sf http://127.0.0.1:8092/verdict | jq .; then
+jq . "$WORK/verdict.json" || true
+if [ "$VERDICT_CODE" = "200" ]; then
   echo "runner contract OK"
 else
-  curl -s http://127.0.0.1:8092/verdict | jq . || true
   echo "SMOKE TEST FAILED"
   exit 1
 fi
+
+# --------------------------------------------------------------- empty turns
+#
+# A provider that accepts a request and streams nothing back leaves opencode
+# with a completed turn holding no parts at all. That used to end the run
+# silently: the runner reported success, and the task showed whatever the
+# agent had last said mid-thought as its result. It has to recover when it
+# can and fail when it cannot — see runToCompletion() in runner.mjs.
+echo "--- checking a single empty turn is retried"
+run_scenario stall-once
+echo "$STATE" | jq .
+if ! echo "$STATE" | jq -e '
+      (.events | index("turn_stalled")) and
+      (.result.ok == true) and
+      ((.result.resultText // "") | length > 0)' > /dev/null; then
+  echo "SMOKE TEST FAILED: an empty turn should be retried and the run should still finish"
+  exit 1
+fi
+echo "empty turn recovered OK"
+
+echo "--- checking an unrecoverable empty turn fails loudly"
+run_scenario stall-always
+echo "$STATE" | jq .
+if ! echo "$STATE" | jq -e '
+      (.events | index("turn_stalled")) and
+      (.result.ok == false) and
+      ((.result.error // "") | test("empty response"))' > /dev/null; then
+  echo "SMOKE TEST FAILED: a run that never recovers must be reported as failed"
+  exit 1
+fi
+echo "unrecoverable empty turn reported as failure OK"
 
 # ------------------------------------------------------------- python toolkit
 #
