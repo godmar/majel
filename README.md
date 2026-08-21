@@ -110,6 +110,12 @@ recorded as a task event. That is a liveness guard, not the policy — it turns
 an unanticipated request from a 30-minute timeout into an immediate tool
 error, and the event tells you which gap to close.
 
+**Python.** Agents are expected to write and run Python, so the image ships
+the libraries the work keeps needing: pandas, numpy, matplotlib, requests,
+`openpyxl` for producing spreadsheets, and `pdfplumber`/`pypdf` for reading
+PDFs. `pip install` also works, but a per-task download is latency on every
+task, and the smoke test asserts these stay importable.
+
 **Network.** Agent pods have no route off the cluster except an HTTP CONNECT
 proxy that tunnels only to hostnames on that agent's allowlist — its model
 provider, the Python package index, the MCP servers it was granted, plus any

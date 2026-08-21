@@ -12,8 +12,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl jq ripgrep unzip ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+# Tasks routinely ask for a spreadsheet back or hand the agent a PDF invoice,
+# so the libraries for both ship in the image: pip works at runtime, but a
+# per-task download is latency on every single task that needs them.
+#
+# pdfplumber is the one that matters for invoices — it exposes text with
+# coordinates and extracts tables — with pypdf alongside for the manipulation
+# it does not do (split, merge, metadata). Both are permissively licensed;
+# PyMuPDF extracts text better still but is AGPL, which is not a licence to
+# take on for a service like this one.
 RUN pip3 install --no-cache-dir --break-system-packages \
-    pandas numpy requests matplotlib openpyxl
+    pandas numpy requests matplotlib openpyxl \
+    pypdf pdfplumber
 
 # The runner depends on opencode's server API; update via
 # sandbox/update-opencode.sh, which smoke-tests the new version before push.

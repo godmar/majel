@@ -58,6 +58,21 @@ else
   exit 1
 fi
 
+# ------------------------------------------------------------- python toolkit
+#
+# Agents are expected to write python — reading a PDF invoice, handing back a
+# spreadsheet — and pip at runtime costs a download on every task that needs
+# it. These ship in the image, so assert they are importable rather than let a
+# future rebuild quietly drop one and turn every such task into a pip install.
+echo "--- checking the preinstalled python toolkit"
+if ! docker run --rm --entrypoint python3 "$IMAGE" -c '
+import openpyxl, pdfplumber, pypdf, pandas, numpy, requests, matplotlib
+print("python toolkit OK")
+'; then
+  echo "SMOKE TEST FAILED: preinstalled python packages are missing"
+  exit 1
+fi
+
 # --------------------------------------------------------------- policy check
 #
 # The C2C pins webfetch/websearch/question/doom_loop to "deny" at the config
