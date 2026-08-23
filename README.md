@@ -118,15 +118,21 @@ mid-thought. The runner retries such a turn once (a `turn_stalled` event
 records it; the session history is intact, so the agent resumes rather than
 restarts) and fails the task outright if the retry is empty too.
 
-This has a known trigger. Three runs died the same way: the request that
-stalled was the largest of its run (~60k-71k tokens), and each died after
-**exactly 181-182s having received not one byte**, while a 385s streaming
-response on a smaller context completed fine. That is an idle timer, not a
-duration cap — time-to-first-token grows with context, and past roughly a
-minute of prefill something in the path gives up. It is not the egress proxy,
-which holds an idle tunnel open indefinitely (measured: 261s, still open).
-The proxy logs one `tunnel-closed` line per tunnel with the byte counts and
-which side sent FIN first, which is what identifies the culprit next time.
+This has a measured profile. Three runs died the same way: **181-182s having
+received not one byte**, on requests of 60k-71k tokens. None of that is
+inherent to the size — measured against the same endpoint while it was idle,
+prefill at 60-70k tokens takes about 8s, generation runs at 106-123 tok/s,
+reasoning is streamed like any other content, and the longest gap between
+bytes is under a second. What distinguishes the runs that died is that the
+same endpoint was delivering **10.2 tok/s** during them, twelve times slower,
+which is contention and not context length. Under load a request can be
+served nothing at all, and at ~181s it gets cut.
+
+It is not the egress proxy: an idle tunnel through it was measured open at
+261s and still going. Whether the cut comes from VT's gateway or opencode's
+own HTTP client is the remaining question, and the proxy's `tunnel-closed`
+line — byte counts plus which side sent FIN first — answers it the next time
+it happens.
 
 **Python.** Agents are expected to write and run Python, so the image ships
 the libraries the work keeps needing: pandas, numpy, matplotlib, requests,
