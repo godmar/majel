@@ -129,18 +129,53 @@ server.on("connect", (req, clientSocket, head) => {
     );
   }
 
+  // Who hung up, after how long, having moved how many bytes. Without this a
+  // provider that accepts a request and answers nothing is indistinguishable
+  // from an agent that simply finished — the shape that made three runs stop
+  // silently at ~181s with zero bytes carried. One line per tunnel, at close.
+  const openedAt = Date.now();
+  let bytesToClient = 0;
+  let bytesFromClient = 0;
+  let closedBy = null;
+  let closeLogged = false;
+  const logClose = () => {
+    if (closeLogged) return;
+    closeLogged = true;
+    log({
+      event: "tunnel-closed",
+      host,
+      port,
+      closedBy: closedBy ?? "unknown",
+      seconds: Math.round((Date.now() - openedAt) / 1000),
+      bytesToClient,
+      bytesFromClient,
+    });
+  };
+
   const upstream = net.connect(port, host, () => {
     log({ verdict: "allow", host, port });
     clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
     upstream.write(head);
+    // Counting before piping is safe only here: until this callback runs both
+    // sockets are paused, so nothing has been read yet and nothing is missed.
+    upstream.on("data", (chunk) => (bytesToClient += chunk.length));
+    clientSocket.on("data", (chunk) => (bytesFromClient += chunk.length));
     upstream.pipe(clientSocket);
     clientSocket.pipe(upstream);
   });
+  // Whichever side sends FIN first is the side that gave up.
+  upstream.on("end", () => (closedBy ??= "upstream"));
+  clientSocket.on("end", () => (closedBy ??= "client"));
   upstream.on("error", (err) => {
+    closedBy ??= "upstream";
     log({ verdict: "upstream-error", host, port, error: err.message });
     clientSocket.end("HTTP/1.1 502 Bad Gateway\r\n\r\n");
   });
-  clientSocket.on("close", () => upstream.destroy());
+  upstream.on("close", logClose);
+  clientSocket.on("close", () => {
+    logClose();
+    upstream.destroy();
+  });
 });
 
 server.listen(PORT, "0.0.0.0", () => log({ event: "listening", port: PORT }));

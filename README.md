@@ -118,6 +118,16 @@ mid-thought. The runner retries such a turn once (a `turn_stalled` event
 records it; the session history is intact, so the agent resumes rather than
 restarts) and fails the task outright if the retry is empty too.
 
+This has a known trigger. Three runs died the same way: the request that
+stalled was the largest of its run (~60k-71k tokens), and each died after
+**exactly 181-182s having received not one byte**, while a 385s streaming
+response on a smaller context completed fine. That is an idle timer, not a
+duration cap — time-to-first-token grows with context, and past roughly a
+minute of prefill something in the path gives up. It is not the egress proxy,
+which holds an idle tunnel open indefinitely (measured: 261s, still open).
+The proxy logs one `tunnel-closed` line per tunnel with the byte counts and
+which side sent FIN first, which is what identifies the culprit next time.
+
 **Python.** Agents are expected to write and run Python, so the image ships
 the libraries the work keeps needing: pandas, numpy, matplotlib, requests,
 `openpyxl` for producing spreadsheets, and `pdfplumber`/`pypdf` for reading
