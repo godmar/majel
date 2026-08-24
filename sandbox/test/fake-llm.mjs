@@ -7,10 +7,16 @@
 //   normal        every turn answers (default)
 //   stall-once    the final turn is empty once, then answers  -> runner retries
 //   stall-always  the final turn is always empty              -> runner fails
+//
+// FAKE_LLM_SILENCE_SECONDS holds the final turn completely silent -- no
+// headers, no body -- for that long before answering normally, which is how
+// a starved provider looks from the client. Set it past a suspected idle
+// timeout to find out whether the client gives up, and after how long.
 import http from "node:http";
 
 const PORT = Number(process.env.PORT ?? 8091);
 const MODE = process.env.FAKE_LLM_MODE ?? "normal";
+const SILENCE_MS = Number(process.env.FAKE_LLM_SILENCE_SECONDS ?? 0) * 1000;
 let stalls = 0;
 
 function sse(res, obj) {
@@ -24,10 +30,23 @@ const server = http.createServer((req, res) => {
   }
   let body = "";
   req.on("data", (c) => (body += c));
-  req.on("end", () => {
+  req.on("end", async () => {
     const payload = JSON.parse(body);
     const hasToolResult = payload.messages.some((m) => m.role === "tool");
     console.log(`fake-llm: ${payload.messages.length} messages, hasToolResult=${hasToolResult}`);
+
+    if (SILENCE_MS > 0 && hasToolResult) {
+      const t0 = Date.now();
+      console.log(`fake-llm: holding the response silent for ${SILENCE_MS / 1000}s`);
+      req.socket.on("close", () =>
+        console.log(`fake-llm: CLIENT HUNG UP after ${((Date.now() - t0) / 1000).toFixed(1)}s`));
+      await new Promise((r) => setTimeout(r, SILENCE_MS));
+      if (res.writableEnded || req.socket.destroyed) {
+        console.log("fake-llm: socket already gone; nothing to answer");
+        return;
+      }
+      console.log("fake-llm: silence over, answering normally");
+    }
 
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
