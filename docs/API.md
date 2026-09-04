@@ -221,4 +221,6 @@ console.log(task.resultText ?? task.error);
   them.
 - Push notifications when a task finishes — poll for now.
 - The `/api/runner/...` routes are internal to the sandbox runner; external
-  applications should not use them.
+  applications should not use them. They do not accept `CC_BEARER_TOKEN` at
+  all — each pod carries a signed credential naming its own task, and a
+  request whose grant does not match the `:taskId` in the path gets `401`.

@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import type { Route } from "./+types/api-runner-result";
-import { requireBearer } from "~/lib/auth.server";
+import { requireRunner } from "~/lib/runner-credential.server";
 import { db } from "~/lib/db.server";
 import { tasks } from "~/lib/schema.server";
 import { addTaskEvent, isTerminal } from "~/lib/tasks.server";
@@ -15,7 +15,7 @@ const resultSchema = z.object({
 
 /** Runner: final outcome. Terminal statuses (e.g. canceled) are not overwritten. */
 export async function action({ request, params }: Route.ActionArgs) {
-  requireBearer(request);
+  requireRunner(request, params.taskId);
   const task = await db.query.tasks.findFirst({ where: eq(tasks.id, params.taskId) });
   if (!task) throw new Response("Not found", { status: 404 });
 

@@ -158,6 +158,18 @@ The NetworkPolicy names no IPs — agent pods may reach three *pod selectors*
 (kube-dns, the C2C, the proxy), and hostname matching happens in the proxy at
 connection time, so allowlisted services can renumber freely.
 
+**What the pod may say back.** The runner has to reach the C2C to fetch its
+prompt and report results, and it cannot keep that credential from the agent
+it supervises: both run in one container as one uid, so anything in the
+runner's environment is one `env` away from the agent's `bash` — and one
+`cat /proc/1/environ` away even if the child's environment is scrubbed, since
+/proc reports the exec-time block that unsetting a variable does not rewrite.
+So the pod carries a credential built to be worthless when it leaks: a signed
+grant naming one task, expiring with the pod, good only for that task's
+`/api/runner` routes, all of which the agent already drives. The shared
+`CC_BEARER_TOKEN` — which acts as any user and reads any task — stays
+server-side and never enters a pod.
+
 Two limits worth knowing. Hosts sharing an ingress are not distinguishable:
 an agent allowed to reach one vhost can send another `Host` header over the
 same tunnel, which separating them would require intercepting TLS to prevent.

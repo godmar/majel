@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { Route } from "./+types/api-runner-transcript";
-import { requireBearer } from "~/lib/auth.server";
+import { requireRunner } from "~/lib/runner-credential.server";
 import { db } from "~/lib/db.server";
 import { tasks } from "~/lib/schema.server";
 
@@ -12,7 +12,7 @@ const MAX_TRANSCRIPT_BYTES = 20 * 1024 * 1024;
  * powers the live activity view.
  */
 export async function action({ request, params }: Route.ActionArgs) {
-  requireBearer(request);
+  requireRunner(request, params.taskId);
   if (request.method !== "PUT") throw new Response("Method not allowed", { status: 405 });
 
   const task = await db.query.tasks.findFirst({ where: eq(tasks.id, params.taskId) });

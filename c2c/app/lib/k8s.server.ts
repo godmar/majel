@@ -4,6 +4,7 @@ import { db } from "./db.server";
 import { egressProxyConfigured, mintEgressCredential } from "./egress.server";
 import { env } from "./env.server";
 import { egressAllowlist, renderOpencodeConfig } from "./opencode-config.server";
+import { mintRunnerToken } from "./runner-credential.server";
 import { agentDefinitions, tasks } from "./schema.server";
 import { addTaskEvent } from "./tasks.server";
 
@@ -76,13 +77,22 @@ export async function launchTask(taskId: string): Promise<void> {
   // in-cluster URL. A public CC_BEARER_URL here would be blocked.
   const noProxy = ["localhost", "127.0.0.1", new URL(ccApiUrl).hostname].join(",");
 
+  // Both of the pod's credentials die with it, on one clock. The slack covers
+  // a runner still uploading results as the Job's deadline lands.
+  const expires = Math.floor(Date.now() / 1000) + agent.timeoutSeconds + 300;
+
+  // Scoped to this task alone: the pod shares a uid with the agent it runs, so
+  // it cannot keep this from it (see runner-credential.server.ts). The shared
+  // CC_BEARER_TOKEN never enters a pod.
+  const runnerToken = mintRunnerToken({ taskId, expires });
+
   const proxyUrl = egressProxyConfigured()
     ? (() => {
         const credential = mintEgressCredential({
           hosts: allowedHosts,
           // Outliving the pod buys an attacker nothing, but a credential that
           // cannot be replayed later is free.
-          expires: Math.floor(Date.now() / 1000) + agent.timeoutSeconds + 300,
+          expires,
         });
         const proxy = new URL(env.SANDBOX_EGRESS_PROXY);
         proxy.username = "agent";
@@ -100,7 +110,7 @@ export async function launchTask(taskId: string): Promise<void> {
       },
       stringData: {
         "config.json": JSON.stringify(config),
-        "cc-bearer-token": env.CC_BEARER_TOKEN,
+        "cc-runner-token": runnerToken,
         ...(proxyUrl ? { "egress-proxy-url": proxyUrl } : {}),
       },
     },
@@ -132,9 +142,9 @@ export async function launchTask(taskId: string): Promise<void> {
                   { name: "TASK_ID", value: taskId },
                   { name: "CC_API_URL", value: ccApiUrl },
                   {
-                    name: "CC_BEARER_TOKEN",
+                    name: "CC_RUNNER_TOKEN",
                     valueFrom: {
-                      secretKeyRef: { name: secretName, key: "cc-bearer-token" },
+                      secretKeyRef: { name: secretName, key: "cc-runner-token" },
                     },
                   },
                   { name: "OPENCODE_CONFIG", value: "/etc/opencode/config.json" },

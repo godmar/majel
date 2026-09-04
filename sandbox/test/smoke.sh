@@ -7,8 +7,18 @@ set -euo pipefail
 
 IMAGE=${1:?usage: smoke.sh <image>}
 DIR=$(cd "$(dirname "$0")" && pwd)
-TOKEN="smoke-test-token"
+SIGNING_KEY="smoke-test-signing-key"
 TASK_ID="00000000-smoke-test"
+# The pod's credential is a signed grant naming one task, minted by the C2C
+# (c2c/app/lib/runner-credential.server.ts). Mint one the same way so the
+# runner is exercised against the real contract rather than a shared string.
+TOKEN=$(SIGNING_KEY="$SIGNING_KEY" TASK_ID="$TASK_ID" node -e '
+  const { createHmac } = require("node:crypto");
+  const grant = { taskId: process.env.TASK_ID, expires: Math.floor(Date.now() / 1000) + 3600 };
+  const payload = Buffer.from(JSON.stringify(grant)).toString("base64url");
+  const mac = createHmac("sha256", process.env.SIGNING_KEY).update(payload).digest("base64url");
+  process.stdout.write(`${payload}.${mac}`);
+')
 WORK=$(mktemp -d)
 trap 'kill $(jobs -p) 2>/dev/null; rm -rf "$WORK"' EXIT
 
@@ -42,14 +52,14 @@ EOF
 run_scenario() { # <fake-llm mode>
   FAKE_LLM_MODE=$1 node "$DIR/fake-llm.mjs" > "$WORK/fake-llm.log" 2>&1 &
   local llm_pid=$!
-  CC_BEARER_TOKEN=$TOKEN TASK_ID=$TASK_ID node "$DIR/mock-c2c.mjs" > "$WORK/mock-c2c.log" 2>&1 &
+  RUNNER_SIGNING_KEY=$SIGNING_KEY TASK_ID=$TASK_ID node "$DIR/mock-c2c.mjs" > "$WORK/mock-c2c.log" 2>&1 &
   local cc_pid=$!
   sleep 1
 
   docker run --rm --network host \
     -e TASK_ID=$TASK_ID \
     -e CC_API_URL=http://127.0.0.1:8092 \
-    -e CC_BEARER_TOKEN=$TOKEN \
+    -e CC_RUNNER_TOKEN=$TOKEN \
     -e OPENCODE_CONFIG=/etc/opencode/config.json \
     -e TASK_TIMEOUT_SECONDS=180 \
     -v "$WORK/config.json":/etc/opencode/config.json:ro \

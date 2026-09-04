@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { redirect } from "react-router";
 import { db } from "./db.server";
 import { adminAccounts, env, isProduction } from "./env.server";
+import { bearerToken } from "./runner-credential.server";
 import { users, type User } from "./schema.server";
 import { getSession } from "./session.server";
 
@@ -33,12 +34,14 @@ export async function requireAdmin(request: Request): Promise<User> {
   return user;
 }
 
-/** Guard for the machine API: constant-time bearer token comparison. */
+/**
+ * Guard for the external machine API (/api/tasks): constant-time comparison
+ * against the shared token. This one opens every task and every user's files,
+ * so it stays server-side — sandbox pods authenticate with requireRunner().
+ */
 export function requireBearer(request: Request): void {
-  const header = request.headers.get("Authorization") ?? "";
-  const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
   const expected = Buffer.from(env.CC_BEARER_TOKEN);
-  const actual = Buffer.from(token);
+  const actual = Buffer.from(bearerToken(request));
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
     throw new Response("Unauthorized", { status: 401 });
   }

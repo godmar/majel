@@ -1,13 +1,13 @@
 import { eq } from "drizzle-orm";
 import type { Route } from "./+types/api-runner-input";
-import { requireBearer } from "~/lib/auth.server";
+import { requireRunner } from "~/lib/runner-credential.server";
 import { db } from "~/lib/db.server";
 import { listTaskFiles } from "~/lib/files.server";
 import { agentDefinitions, tasks } from "~/lib/schema.server";
 
 /** Runner: task prompt (with input-file preamble) and input file metadata. */
 export async function loader({ request, params }: Route.LoaderArgs) {
-  requireBearer(request);
+  requireRunner(request, params.taskId);
   const task = await db.query.tasks.findFirst({ where: eq(tasks.id, params.taskId) });
   if (!task) throw new Response("Not found", { status: 404 });
 

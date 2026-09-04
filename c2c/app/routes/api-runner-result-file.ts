@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { Route } from "./+types/api-runner-result-file";
-import { requireBearer } from "~/lib/auth.server";
+import { requireRunner } from "~/lib/runner-credential.server";
 import { db } from "~/lib/db.server";
 import { FileTooLargeError, MAX_FILE_BYTES, saveTaskFile } from "~/lib/files.server";
 import { tasks } from "~/lib/schema.server";
@@ -10,7 +10,7 @@ import { tasks } from "~/lib/schema.server";
  * URI-encoded X-Filename header) so memory stays bounded on both sides.
  */
 export async function action({ request, params }: Route.ActionArgs) {
-  requireBearer(request);
+  requireRunner(request, params.taskId);
   const task = await db.query.tasks.findFirst({ where: eq(tasks.id, params.taskId) });
   if (!task) throw new Response("Not found", { status: 404 });
 

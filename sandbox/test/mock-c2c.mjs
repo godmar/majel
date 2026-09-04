@@ -5,11 +5,14 @@
 // GET /verdict which returns 200 only if the run exercised the whole
 // contract: events, live transcript sync with a tool call, an uploaded
 // output file, and a successful result with text.
+import { createHmac, timingSafeEqual } from "node:crypto";
 import http from "node:http";
 
 const PORT = Number(process.env.PORT ?? 8092);
-const TOKEN = process.env.CC_BEARER_TOKEN ?? "smoke-test-token";
 const TASK_ID = process.env.TASK_ID ?? "00000000-smoke-test";
+// Must match the key smoke.sh mints with; the real key is derived from
+// SESSION_SECRET (see c2c/app/lib/runner-credential.server.ts).
+const SIGNING_KEY = process.env.RUNNER_SIGNING_KEY ?? "smoke-test-signing-key";
 
 const state = {
   events: [],
@@ -18,7 +21,33 @@ const state = {
   files: [],
   result: null,
   authFailures: 0,
+  wrongTaskAccepted: false,
 };
+
+/**
+ * The same check the C2C makes: a valid signature over an unexpired grant
+ * naming this task. Mirrors requireRunner() in c2c/app/lib/runner-credential.server.ts —
+ * a runner that sends the shared token, or a grant for another task, must
+ * come back 401 here just as it would in production.
+ */
+function grantFor(header) {
+  const token = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+  const [payload, mac] = token.split(".");
+  if (!payload || !mac) return null;
+  const expected = Buffer.from(
+    createHmac("sha256", SIGNING_KEY).update(payload).digest("base64url"),
+  );
+  const actual = Buffer.from(mac);
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return null;
+  try {
+    const grant = JSON.parse(Buffer.from(payload, "base64url").toString());
+    if (typeof grant.taskId !== "string" || typeof grant.expires !== "number") return null;
+    if (grant.expires < Date.now() / 1000) return null;
+    return grant;
+  } catch {
+    return null;
+  }
+}
 
 function json(res, code, obj) {
   res.writeHead(code, { "Content-Type": "application/json" });
@@ -36,6 +65,7 @@ function readBody(req) {
 function verdict() {
   const checks = {
     "runner authenticated every call": state.authFailures === 0,
+    "runner presented a grant scoped to this task": state.wrongTaskAccepted === false,
     "runner_started event": state.events.some((e) => e.type === "runner_started"),
     "session_created event with sessionID": state.events.some(
       (e) => e.type === "session_created" && typeof e.data?.sessionID === "string",
@@ -71,10 +101,16 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  const auth = req.headers.authorization ?? "";
-  if (auth !== `Bearer ${TOKEN}`) {
+  const grant = grantFor(req.headers.authorization ?? "");
+  if (!grant) {
     state.authFailures++;
     return json(res, 401, { error: "unauthorized" });
+  }
+  // A grant is only good for the task it names. Recorded rather than rejected
+  // so the verdict can say which rule the runner broke.
+  if (grant.taskId !== TASK_ID) {
+    state.wrongTaskAccepted = true;
+    return json(res, 401, { error: "wrong task" });
   }
 
   const base = `/api/runner/tasks/${TASK_ID}`;

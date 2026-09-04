@@ -5,7 +5,7 @@
  * Environment:
  *   TASK_ID          task UUID
  *   CC_API_URL       base URL of the C2C server (in-cluster service)
- *   CC_BEARER_TOKEN  bearer token for the C2C machine API
+ *   CC_RUNNER_TOKEN  per-task credential for this task's C2C runner API
  *   OPENCODE_CONFIG  path to the rendered opencode.json (mounted secret)
  *   TASK_TIMEOUT_SECONDS  optional wall-clock budget (default 1800)
  *
@@ -22,7 +22,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 
 const TASK_ID = requireEnv("TASK_ID");
 const CC_API_URL = requireEnv("CC_API_URL").replace(/\/$/, "");
-const CC_BEARER_TOKEN = requireEnv("CC_BEARER_TOKEN");
+const CC_RUNNER_TOKEN = requireEnv("CC_RUNNER_TOKEN");
 const WORKSPACE = process.env.WORKSPACE ?? "/workspace";
 const OC_PORT = Number(process.env.OPENCODE_PORT ?? 4096);
 const OC_URL = `http://127.0.0.1:${OC_PORT}`;
@@ -52,12 +52,12 @@ function requireEnv(name) {
   return v;
 }
 
-/** fetch against the C2C machine API with auth and retries. */
+/** fetch against this task's C2C runner API with auth and retries. */
 async function cc(pathname, { method = "GET", json, body, headers = {}, retries = 5 } = {}) {
   const url = `${CC_API_URL}${pathname}`;
   const opts = {
     method,
-    headers: { Authorization: `Bearer ${CC_BEARER_TOKEN}`, ...headers },
+    headers: { Authorization: `Bearer ${CC_RUNNER_TOKEN}`, ...headers },
   };
   if (json !== undefined) {
     opts.body = JSON.stringify(json);
