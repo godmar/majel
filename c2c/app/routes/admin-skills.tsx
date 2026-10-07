@@ -86,8 +86,8 @@ export default function AdminSkills({ loaderData }: Route.ComponentProps) {
         A skill is a set of instructions an agent can load when a task calls for it. The agent
         always sees each skill's name and description, and reads the full instructions only when
         it decides the skill applies, so skills add know-how without lengthening every prompt.
-        Grant skills to agents on each agent's page; a disabled skill is withheld from every
-        agent. See the{" "}
+        Choose which skills an agent uses on that agent's page; a disabled skill is withheld
+        from every agent. See the{" "}
         <Link href="https://opencode.ai/docs/skills/" target="_blank" rel="noreferrer">
           opencode skills documentation
         </Link>

@@ -5,10 +5,9 @@ import AccordionSummary from "@mui/material/AccordionSummary";
 import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
 import Button from "@mui/material/Button";
-import Checkbox from "@mui/material/Checkbox";
 import FormControlLabel from "@mui/material/FormControlLabel";
-import FormGroup from "@mui/material/FormGroup";
 import IconButton from "@mui/material/IconButton";
+import MuiLink from "@mui/material/Link";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
 import Switch from "@mui/material/Switch";
@@ -53,17 +52,15 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     : await db.query.skills.findFirst({ where: eq(skills.id, Number(params.skillId)) });
   if (!isNew && !skill) throw new Response("Not found", { status: 404 });
 
-  const agents = await db
-    .select({ id: agentDefinitions.id, name: agentDefinitions.name, enabled: agentDefinitions.enabled })
-    .from(agentDefinitions)
-    .orderBy(asc(agentDefinitions.name));
-  const grantedTo = skill
-    ? (
-        await db
-          .select({ id: agentSkills.agentDefinitionId })
-          .from(agentSkills)
-          .where(eq(agentSkills.skillId, skill.id))
-      ).map((r) => r.id)
+  // Which agents use a skill is set on each agent's page; shown here only so
+  // an edit's reach is visible.
+  const usedBy = skill
+    ? await db
+        .select({ id: agentDefinitions.id, name: agentDefinitions.name })
+        .from(agentSkills)
+        .innerJoin(agentDefinitions, eq(agentSkills.agentDefinitionId, agentDefinitions.id))
+        .where(eq(agentSkills.skillId, skill.id))
+        .orderBy(asc(agentDefinitions.name))
     : [];
 
   const files = skill
@@ -82,7 +79,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       }))
     : [];
 
-  return { skill, agents, grantedTo, files };
+  return { skill, usedBy, files };
 }
 
 // The editor sends every file to keep; content only for new or edited ones.
@@ -157,7 +154,6 @@ export async function action({ request, params }: Route.ActionArgs) {
     };
   }
 
-  const agentIds = form.getAll("agentIds").map(Number).filter(Number.isInteger);
   try {
     await db.transaction(async (tx) => {
       let skillId: number;
@@ -175,12 +171,6 @@ export async function action({ request, params }: Route.ActionArgs) {
         await tx.insert(skillFiles).values(
           files.map((f) => ({ skillId, ...f, sizeBytes: f.content.length })),
         );
-      }
-      await tx.delete(agentSkills).where(eq(agentSkills.skillId, skillId));
-      if (agentIds.length > 0) {
-        await tx
-          .insert(agentSkills)
-          .values(agentIds.map((agentDefinitionId) => ({ agentDefinitionId, skillId })));
       }
     });
   } catch (err) {
@@ -213,7 +203,7 @@ function FieldHelp({ field, children }: { field: string; children: React.ReactNo
 }
 
 export default function AdminSkillEdit({ loaderData, actionData }: Route.ComponentProps) {
-  const { skill, agents, grantedTo, files: savedFiles } = loaderData;
+  const { skill, usedBy, files: savedFiles } = loaderData;
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
 
@@ -465,26 +455,26 @@ export default function AdminSkillEdit({ loaderData, actionData }: Route.Compone
 
             <Box>
               <Typography variant="subtitle1" gutterBottom>
-                Agents that may use this skill
+                Used by
               </Typography>
-              <FormGroup row>
-                {agents.map((a) => (
-                  <FormControlLabel
-                    key={a.id}
-                    control={
-                      <Checkbox
-                        name="agentIds"
-                        value={a.id}
-                        defaultChecked={grantedTo.includes(a.id)}
-                      />
-                    }
-                    label={a.enabled ? a.name : `${a.name} (disabled)`}
-                  />
-                ))}
-                {agents.length === 0 && (
-                  <Typography color="text.secondary">No agents configured.</Typography>
-                )}
-              </FormGroup>
+              <Typography variant="body2" color="text.secondary">
+                {usedBy.length > 0 ? (
+                  <>
+                    {usedBy.map((a, i) => (
+                      <React.Fragment key={a.id}>
+                        {i > 0 && ", "}
+                        <MuiLink component={Link} to={`/admin/agents/${a.id}`}>
+                          {a.name}
+                        </MuiLink>
+                      </React.Fragment>
+                    ))}
+                    . Changes take effect on their next task.
+                  </>
+                ) : (
+                  "No agent uses this skill yet."
+                )}{" "}
+                Choose an agent's skills on that agent's page.
+              </Typography>
             </Box>
 
             <FormControlLabel
