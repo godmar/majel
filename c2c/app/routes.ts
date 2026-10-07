@@ -8,6 +8,7 @@ export default [
 
   // File downloads render raw bytes, so they live outside the app layout.
   route("tasks/:taskId/files/:fileId", "routes/task-file-download.ts"),
+  route("tasks/:taskId/output.zip", "routes/task-output-zip.ts"),
 
   // Machine API for programmatic/external task creation (bearer token auth).
   route("api/tasks", "routes/api-tasks.ts"),

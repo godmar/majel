@@ -20,6 +20,7 @@ import ArchiveIcon from "@mui/icons-material/Archive";
 import CancelIcon from "@mui/icons-material/Cancel";
 import UnarchiveIcon from "@mui/icons-material/Unarchive";
 import CircleIcon from "@mui/icons-material/Circle";
+import DownloadIcon from "@mui/icons-material/Download";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import InsertDriveFileIcon from "@mui/icons-material/InsertDriveFile";
 import ReplayIcon from "@mui/icons-material/Replay";
@@ -30,11 +31,13 @@ import type { Route } from "./+types/task-detail";
 import ActivityTimeline from "~/components/ActivityTimeline";
 import DateTime from "~/components/DateTime";
 import MarkdownView from "~/components/MarkdownView";
+import RunStatsCard from "~/components/RunStatsCard";
 import TaskStatusChip from "~/components/TaskStatusChip";
 import { requireUser } from "~/lib/auth.server";
 import { db } from "~/lib/db.server";
 import { listTaskFiles } from "~/lib/files.server";
 import { agentDefinitions, taskComments, taskEvents, taskFiles, tasks, users } from "~/lib/schema.server";
+import { computeRunStats } from "~/lib/task-stats";
 import { addTaskEvent, createTask, isTerminal } from "~/lib/tasks.server";
 
 export async function loader({ request, params }: Route.LoaderArgs) {
@@ -90,6 +93,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       ratedAt: task.ratingUpdatedAt,
     },
     agentName: agent?.name ?? "unknown",
+    stats: computeRunStats(task.transcript, task),
     events: events.map((e) => ({ id: e.id, ts: e.ts, type: e.type, message: e.message })),
     inputFiles: files.filter((f) => f.kind === "input"),
     outputFiles: files.filter((f) => f.kind === "output"),
@@ -291,7 +295,7 @@ function FeedbackCard({
 }
 
 export default function TaskDetail({ loaderData, actionData }: Route.ComponentProps) {
-  const { task, agentName, events, inputFiles, outputFiles, comments, terminal } = loaderData;
+  const { task, agentName, stats, events, inputFiles, outputFiles, comments, terminal } = loaderData;
   const revalidator = useRevalidator();
 
   // Live-refresh while the task is active; the runner keeps the transcript
@@ -405,12 +409,28 @@ export default function TaskDetail({ loaderData, actionData }: Route.ComponentPr
 
       {outputFiles.length > 0 && (
         <Paper sx={{ p: 2, mb: 2 }}>
-          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-            Output files
-          </Typography>
+          <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between" }}>
+            <Typography variant="subtitle2" color="text.secondary">
+              Output files
+            </Typography>
+            {/* Outputs land as the run finishes, so the archive is only
+                complete once it has. */}
+            {terminal && (
+              <Button
+                size="small"
+                startIcon={<DownloadIcon />}
+                href={`/tasks/${task.id}/output.zip`}
+                download
+              >
+                Download all (.zip)
+              </Button>
+            )}
+          </Stack>
           <FileList taskId={task.id} files={outputFiles} />
         </Paper>
       )}
+
+      {stats && <RunStatsCard stats={stats} live={!terminal} />}
 
       <FeedbackCard task={task} comments={comments} />
 

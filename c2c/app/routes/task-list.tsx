@@ -20,14 +20,26 @@ import ArchiveIcon from "@mui/icons-material/Archive";
 import SearchIcon from "@mui/icons-material/Search";
 import UnarchiveIcon from "@mui/icons-material/Unarchive";
 import * as React from "react";
-import { and, count, desc, eq, ilike, inArray, isNotNull, isNull, or, type SQL } from "drizzle-orm";
+import {
+  and,
+  count,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import { Link, useFetcher, useNavigate, useSearchParams } from "react-router";
 import type { Route } from "./+types/task-list";
 import DateTime from "~/components/DateTime";
 import TaskStatusChip from "~/components/TaskStatusChip";
 import { requireUser } from "~/lib/auth.server";
 import { db } from "~/lib/db.server";
-import { agentDefinitions, tasks, users } from "~/lib/schema.server";
+import { agentDefinitions, providers, tasks, users } from "~/lib/schema.server";
 import { TERMINAL, type TaskStatus } from "~/lib/task-status";
 
 const PAGE_SIZES = [25, 50, 100];
@@ -85,6 +97,7 @@ export async function loader({ request }: Route.LoaderArgs) {
         createdAt: tasks.createdAt,
         username: users.username,
         agentName: agentDefinitions.name,
+        model: sql<string>`coalesce(${tasks.modelOverride}, ${agentDefinitions.model})`,
       })
       .from(tasks)
       .innerJoin(agentDefinitions, eq(tasks.agentDefinitionId, agentDefinitions.id))
@@ -106,7 +119,18 @@ export async function loader({ request }: Route.LoaderArgs) {
     .limit(size)
     .offset(clampedPage * size);
 
-  return { rows, total, page: clampedPage, size, q, status, view, isAdmin };
+  // "<provider>/<modelID>" reads poorly in a narrow column; the provider
+  // catalog carries a display name for each model.
+  const catalog = await db.select({ name: providers.name, models: providers.models }).from(providers);
+  const modelNames = new Map<string, string>(
+    catalog.flatMap((p) => p.models.map((m): [string, string] => [`${p.name}/${m.id}`, m.name])),
+  );
+  const withModelNames = rows.map((r) => ({
+    ...r,
+    modelName: modelNames.get(r.model) ?? r.model.slice(r.model.indexOf("/") + 1),
+  }));
+
+  return { rows: withModelNames, total, page: clampedPage, size, q, status, view, isAdmin };
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -133,6 +157,11 @@ export async function action({ request }: Route.ActionArgs) {
       .where(and(inArray(tasks.id, ids), ownTask));
   }
   return { ok: true };
+}
+
+/** Cell styles that cut a long value to one line with an ellipsis. */
+function truncated(maxWidth: number) {
+  return { maxWidth, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } as const;
 }
 
 function oneLine(text: string, max: number): string {
@@ -273,8 +302,9 @@ export default function TaskList({ loaderData }: Route.ComponentProps) {
                   />
                 </TableCell>
                 <TableCell>Status</TableCell>
-                <TableCell>Agent</TableCell>
                 <TableCell>Prompt</TableCell>
+                <TableCell>Agent</TableCell>
+                <TableCell>Model</TableCell>
                 {isAdmin && <TableCell>User</TableCell>}
                 <TableCell>Created</TableCell>
               </TableRow>
@@ -307,7 +337,6 @@ export default function TaskList({ loaderData }: Route.ComponentProps) {
                     <TableCell sx={{ whiteSpace: "nowrap" }}>
                       <TaskStatusChip status={row.status} />
                     </TableCell>
-                    <TableCell sx={{ whiteSpace: "nowrap" }}>{row.agentName}</TableCell>
                     <TableCell
                       title={oneLine(row.prompt, 1000)}
                       sx={{
@@ -318,6 +347,12 @@ export default function TaskList({ loaderData }: Route.ComponentProps) {
                       }}
                     >
                       {oneLine(row.prompt, 300)}
+                    </TableCell>
+                    <TableCell title={row.agentName} sx={truncated(110)}>
+                      {row.agentName}
+                    </TableCell>
+                    <TableCell title={row.model} sx={truncated(180)}>
+                      {row.modelName}
                     </TableCell>
                     {isAdmin && (
                       <TableCell sx={{ whiteSpace: "nowrap" }}>{row.username ?? "—"}</TableCell>
