@@ -35,6 +35,12 @@ const MAX_FILE_BYTES = 25 * 1024 * 1024;
 // with zero tokens in and out and finish "unknown", both times immediately
 // after an unusually long turn. The session history survives it, so nudging
 // the agent to continue recovers the run; only a second empty turn is fatal.
+//
+// Since 1.18.21 opencode retries such a turn itself (it treats finish
+// "unknown" like "tool-calls") with no limit and no backoff: a provider that
+// answers empty *quickly* gets ~20 requests a second for the whole task
+// budget. So the budget below counts every empty turn in the run, whoever
+// retried it, and the runner aborts the session once it is spent.
 const MAX_STALL_RETRIES = 1;
 const STALL_RETRY_DELAY_MS = 5000;
 const STALL_RETRY_PROMPT =
@@ -240,6 +246,27 @@ function describeStall(info) {
   return `finish "${info?.finish ?? "none"}"${secs}, ${info?.tokens?.output ?? 0} output tokens`;
 }
 
+async function sessionIdle(sessionID) {
+  try {
+    const status = await (await oc("/session/status", { timeoutMs: 5000 })).json();
+    return (status[sessionID]?.type ?? "idle") === "idle";
+  } catch (err) {
+    console.error("session status poll failed:", err.message);
+    return false;
+  }
+}
+
+/** Completed assistant turns that produced nothing (see turnProducedNothing). */
+function emptyTurns(transcript) {
+  return transcript.filter(
+    (m) =>
+      m?.info?.role === "assistant" &&
+      m.info.time?.completed &&
+      !m.info.error &&
+      turnProducedNothing(m),
+  );
+}
+
 /**
  * Poll the transcript until the agent loop finishes. A turn is complete when
  * the newest message is an assistant message with time.completed set and a
@@ -247,10 +274,13 @@ function describeStall(info) {
  * coming). The /api/session/{id}/wait endpoint is unreliable in opencode
  * 1.17.x (returns 503), so completion is derived from messages instead.
  *
+ * Every poll is handed to onPoll first, so the caller can stop a loop that
+ * opencode would otherwise never end on its own.
+ *
  * afterLength ignores a transcript that has not yet grown past what the caller
  * already saw, so a retry cannot immediately re-read the turn it is retrying.
  */
-async function waitForCompletion(sessionID, deadline, afterLength = 0) {
+async function waitForCompletion(sessionID, deadline, afterLength, onPoll) {
   while (Date.now() < deadline) {
     await sleep(2000);
     let transcript;
@@ -260,13 +290,19 @@ async function waitForCompletion(sessionID, deadline, afterLength = 0) {
       console.error("transcript poll failed:", err.message);
       continue;
     }
+    await onPoll(transcript);
     if (transcript.length <= afterLength) continue;
     const info = transcript.at(-1)?.info;
     if (info?.role !== "assistant") continue;
     if (info.error) {
       throw new Error(`agent error: ${JSON.stringify(info.error).slice(0, 500)}`);
     }
-    if (info.time?.completed && info.finish !== "tool-calls") {
+    if (info.time?.completed && info.finish !== "tool-calls" && info.finish !== "unknown") {
+      return transcript;
+    }
+    // opencode >= 1.18.21 continues past "unknown" on its own, so it ends the
+    // run only once opencode has actually gone idle.
+    if (info.time?.completed && info.finish === "unknown" && (await sessionIdle(sessionID))) {
       return transcript;
     }
   }
@@ -277,31 +313,46 @@ async function waitForCompletion(sessionID, deadline, afterLength = 0) {
  * Drive the session until it produces a real answer.
  *
  * An empty turn used to end the run silently: the runner reported success and
- * the task showed the agent's last mid-thought sentence as its result. Retry
- * it once — the history is intact, so the agent resumes where it stopped —
- * and if the retry comes back empty too, fail loudly rather than hand back a
- * plan as though it were the work.
+ * the task showed the agent's last mid-thought sentence as its result. One
+ * empty turn is tolerated — the history is intact, so the agent resumes where
+ * it stopped — whether opencode retries it on its own or stops and the runner
+ * nudges it. Past that, abort the session and fail loudly rather than hand
+ * back a plan as though it were the work (or let opencode hammer the provider
+ * until the deadline).
  */
 async function runToCompletion(sessionID, deadline) {
-  let seen = 0;
-  for (let attempt = 0; ; attempt++) {
-    const transcript = await waitForCompletion(sessionID, deadline, seen);
-    const last = transcript.at(-1);
-    if (!turnProducedNothing(last)) return transcript;
-
-    const detail = describeStall(last?.info);
-    if (attempt >= MAX_STALL_RETRIES) {
+  let reported = 0;
+  const checkStalls = async (transcript) => {
+    const empty = emptyTurns(transcript);
+    if (empty.length <= reported) return;
+    const detail = describeStall(empty.at(-1).info);
+    if (empty.length > MAX_STALL_RETRIES) {
+      try {
+        await oc(`/session/${sessionID}/abort`, { method: "POST", timeoutMs: 5000 });
+      } catch (err) {
+        console.error("aborting the session failed:", err.message);
+      }
       throw new Error(
-        `the model returned an empty response and did not recover after ${attempt} ` +
-          `retry: the run stopped before finishing (${detail})`,
+        `the model returned an empty response and did not recover after ${MAX_STALL_RETRIES} ` +
+          `retry: the run stopped before finishing (${detail}; ${empty.length} empty turns)`,
       );
     }
-
-    console.error(`empty response from the model (${detail}); asking the agent to continue`);
+    reported = empty.length;
+    console.error(`empty response from the model (${detail}); retrying`);
     await postEvent("turn_stalled", `Model returned an empty response (${detail}); retrying.`, {
-      finish: last?.info?.finish ?? null,
-      attempt: attempt + 1,
+      finish: empty.at(-1).info.finish ?? null,
+      attempt: empty.length,
     });
+  };
+
+  let seen = 0;
+  for (;;) {
+    const transcript = await waitForCompletion(sessionID, deadline, seen, checkStalls);
+    if (!turnProducedNothing(transcript.at(-1))) return transcript;
+
+    // opencode stopped on the empty turn instead of continuing past it, so
+    // nudge it; checkStalls has already counted the turn against the budget.
+    console.error("agent stopped after an empty response; asking it to continue");
     seen = transcript.length;
     await sleep(STALL_RETRY_DELAY_MS);
     await oc(`/session/${sessionID}/prompt_async`, {

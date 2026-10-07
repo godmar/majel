@@ -114,9 +114,14 @@ The runner also guards the other end of a turn. A provider that accepts a
 request and streams nothing back leaves opencode with a completed turn holding
 no parts, which is indistinguishable from finishing unless you look — the run
 would be reported as a success whose result was whatever the agent last said
-mid-thought. The runner retries such a turn once (a `turn_stalled` event
-records it; the session history is intact, so the agent resumes rather than
-restarts) and fails the task outright if the retry is empty too.
+mid-thought. One such turn is tolerated (a `turn_stalled` event records it;
+the session history is intact, so the agent resumes rather than restarts);
+a second fails the task outright. opencode ≥ 1.18.21 retries a turn that
+finishes `unknown` by itself, with no limit and no backoff, so the runner
+counts every empty turn in the run and aborts the session once the budget is
+spent — otherwise a provider that answers empty quickly would be re-requested
+~20 times a second until the task deadline. If opencode instead stops on the
+empty turn, the runner nudges the agent to continue.
 
 This has a measured profile. Three runs died the same way: **181-182s having
 received not one byte**, on requests of 60k-71k tokens. None of that is

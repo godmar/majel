@@ -4,9 +4,11 @@
 // FAKE_LLM_MODE reproduces the production failure where a provider accepts a
 // request and streams nothing back, which opencode records as a completed
 // turn with no parts and finish "unknown":
-//   normal        every turn answers (default)
-//   stall-once    the final turn is empty once, then answers  -> runner retries
-//   stall-always  the final turn is always empty              -> runner fails
+//   normal          every turn answers (default)
+//   stall-once      the final turn is empty once, then answers -> run recovers
+//   stall-always    the final turn is always empty             -> runner fails
+//   stall-stop-once the final turn is empty once but says finish_reason
+//                   "stop", so opencode ends its loop there    -> runner nudges
 //
 // FAKE_LLM_SILENCE_SECONDS holds the final turn completely silent -- no
 // headers, no body -- for that long before answering normally, which is how
@@ -54,21 +56,26 @@ const server = http.createServer((req, res) => {
       Connection: "keep-alive",
     });
 
-    // An empty stream: headers, no chunks, no finish_reason, just [DONE].
-    if (hasToolResult && (MODE === "stall-always" || (MODE === "stall-once" && stalls === 0))) {
-      stalls++;
-      console.log(`fake-llm: returning an empty stream (stall ${stalls}, mode ${MODE})`);
-      res.write("data: [DONE]\n\n");
-      res.end();
-      return;
-    }
-
     const base = {
       id: "chatcmpl-fake",
       object: "chat.completion.chunk",
       created: Math.floor(Date.now() / 1000),
       model: payload.model,
     };
+
+    // An empty stream: headers, no chunks, no finish_reason, just [DONE]
+    // (or, for stall-stop-once, nothing but a "stop").
+    const stallOnce = MODE === "stall-once" || MODE === "stall-stop-once";
+    if (hasToolResult && (MODE === "stall-always" || (stallOnce && stalls === 0))) {
+      stalls++;
+      console.log(`fake-llm: returning an empty stream (stall ${stalls}, mode ${MODE})`);
+      if (MODE === "stall-stop-once") {
+        sse(res, { ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
+      }
+      res.write("data: [DONE]\n\n");
+      res.end();
+      return;
+    }
 
     if (!hasToolResult) {
       sse(res, {
