@@ -9,6 +9,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 import type { TaskStatus } from "./task-status";
@@ -116,6 +117,57 @@ export const agentMcpServers = pgTable(
   (t) => [primaryKey({ columns: [t.agentDefinitionId, t.mcpServerId] })],
 );
 
+// Agent Skills (https://opencode.ai/docs/skills/): reusable instructions an
+// agent loads on demand. Each row renders to one SKILL.md; the frontmatter
+// fields are kept as columns so the admin UI can explain and validate each.
+export const skills = pgTable("skills", {
+  id: serial("id").primaryKey(),
+  // Also the skill's directory name in the pod; opencode requires them equal.
+  name: text("name").notNull().unique(),
+  description: text("description").notNull(),
+  license: text("license"),
+  compatibility: text("compatibility"),
+  metadata: jsonb("metadata").$type<Record<string, string>>().notNull().default({}),
+  // Markdown after the frontmatter: what the agent reads when it loads the skill.
+  body: text("body").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Supporting files shipped next to a skill's SKILL.md: scripts the agent
+// runs, reference material it reads, templates it copies. Stored as bytes so
+// binary templates (an .xlsx) work as well as text.
+export const skillFiles = pgTable(
+  "skill_files",
+  {
+    id: serial("id").primaryKey(),
+    skillId: integer("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+    // Relative to the skill's directory, e.g. "scripts/check.py".
+    path: text("path").notNull(),
+    content: bytea("content").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    executable: boolean("executable").notNull().default(false),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("skill_files_skill_path_idx").on(t.skillId, t.path)],
+);
+
+export const agentSkills = pgTable(
+  "agent_skills",
+  {
+    agentDefinitionId: integer("agent_definition_id")
+      .notNull()
+      .references(() => agentDefinitions.id, { onDelete: "cascade" }),
+    skillId: integer("skill_id")
+      .notNull()
+      .references(() => skills.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.agentDefinitionId, t.skillId] })],
+);
+
 export type { TaskStatus };
 
 export const tasks = pgTable("tasks", {
@@ -193,6 +245,8 @@ export const taskEvents = pgTable("task_events", {
 
 export type User = typeof users.$inferSelect;
 export type McpServer = typeof mcpServers.$inferSelect;
+export type Skill = typeof skills.$inferSelect;
+export type SkillFile = typeof skillFiles.$inferSelect;
 export type Provider = typeof providers.$inferSelect;
 export type AgentDefinition = typeof agentDefinitions.$inferSelect;
 export type Task = typeof tasks.$inferSelect;

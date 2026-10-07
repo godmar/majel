@@ -9,6 +9,7 @@ export default [
   // File downloads render raw bytes, so they live outside the app layout.
   route("tasks/:taskId/files/:fileId", "routes/task-file-download.ts"),
   route("tasks/:taskId/output.zip", "routes/task-output-zip.ts"),
+  route("admin/skills/:skillId/files/:fileId", "routes/admin-skill-file-download.ts"),
 
   // Machine API for programmatic/external task creation (bearer token auth).
   route("api/tasks", "routes/api-tasks.ts"),
@@ -32,6 +33,8 @@ export default [
     route("admin/agents", "routes/admin-agents.tsx"),
     route("admin/agents/:agentId", "routes/admin-agent-edit.tsx"),
     route("admin/mcp-servers", "routes/admin-mcp-servers.tsx"),
+    route("admin/skills", "routes/admin-skills.tsx"),
+    route("admin/skills/:skillId", "routes/admin-skill-edit.tsx"),
     route("admin/providers", "routes/admin-providers.tsx"),
   ]),
 ] satisfies RouteConfig;

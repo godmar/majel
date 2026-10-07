@@ -18,7 +18,7 @@ import { Link } from "react-router";
 import type { Route } from "./+types/admin-agents";
 import { requireAdmin } from "~/lib/auth.server";
 import { db } from "~/lib/db.server";
-import { agentDefinitions, agentMcpServers } from "~/lib/schema.server";
+import { agentDefinitions, agentMcpServers, agentSkills } from "~/lib/schema.server";
 
 export async function loader({ request }: Route.LoaderArgs) {
   await requireAdmin(request);
@@ -31,6 +31,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       enabled: agentDefinitions.enabled,
       timeoutSeconds: agentDefinitions.timeoutSeconds,
       mcpCount: sql<number>`(select count(*) from ${agentMcpServers} where ${agentMcpServers.agentDefinitionId} = ${agentDefinitions.id})`,
+      skillCount: sql<number>`(select count(*) from ${agentSkills} where ${agentSkills.agentDefinitionId} = ${agentDefinitions.id})`,
     })
     .from(agentDefinitions)
     .orderBy(asc(agentDefinitions.name));
@@ -54,6 +55,7 @@ export default function AdminAgents({ loaderData }: Route.ComponentProps) {
               <TableCell>Description</TableCell>
               <TableCell>Model</TableCell>
               <TableCell>MCP servers</TableCell>
+              <TableCell>Skills</TableCell>
               <TableCell>Timeout</TableCell>
               <TableCell>Status</TableCell>
               <TableCell align="right">Actions</TableCell>
@@ -71,6 +73,7 @@ export default function AdminAgents({ loaderData }: Route.ComponentProps) {
                 </TableCell>
                 <TableCell>{a.model}</TableCell>
                 <TableCell>{a.mcpCount}</TableCell>
+                <TableCell>{a.skillCount}</TableCell>
                 <TableCell>{a.timeoutSeconds}s</TableCell>
                 <TableCell>
                   <Chip

@@ -4,6 +4,7 @@ import Button from "@mui/material/Button";
 import Checkbox from "@mui/material/Checkbox";
 import FormControlLabel from "@mui/material/FormControlLabel";
 import FormGroup from "@mui/material/FormGroup";
+import MuiLink from "@mui/material/Link";
 import MenuItem from "@mui/material/MenuItem";
 import Paper from "@mui/material/Paper";
 import Stack from "@mui/material/Stack";
@@ -19,8 +20,10 @@ import { db } from "~/lib/db.server";
 import {
   agentDefinitions,
   agentMcpServers,
+  agentSkills,
   mcpServers,
   providers,
+  skills,
 } from "~/lib/schema.server";
 
 export async function loader({ request, params }: Route.LoaderArgs) {
@@ -55,7 +58,26 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       ).map((r) => r.id)
     : [];
 
-  return { agent, modelOptions, allMcp, selectedMcp };
+  const allSkills = await db
+    .select({
+      id: skills.id,
+      name: skills.name,
+      description: skills.description,
+      enabled: skills.enabled,
+    })
+    .from(skills)
+    .orderBy(asc(skills.name));
+
+  const selectedSkills = agent
+    ? (
+        await db
+          .select({ id: agentSkills.skillId })
+          .from(agentSkills)
+          .where(eq(agentSkills.agentDefinitionId, agent.id))
+      ).map((r) => r.id)
+    : [];
+
+  return { agent, modelOptions, allMcp, selectedMcp, allSkills, selectedSkills };
 }
 
 const PERMISSION_VALUES = ["allow", "deny"] as const;
@@ -144,11 +166,17 @@ export async function action({ request, params }: Route.ActionArgs) {
     await db.insert(agentMcpServers).values({ agentDefinitionId: agentId, mcpServerId });
   }
 
+  const skillIds = form.getAll("skillIds").map(Number).filter(Number.isInteger);
+  await db.delete(agentSkills).where(eq(agentSkills.agentDefinitionId, agentId));
+  for (const skillId of skillIds) {
+    await db.insert(agentSkills).values({ agentDefinitionId: agentId, skillId });
+  }
+
   throw redirect("/admin/agents");
 }
 
 export default function AdminAgentEdit({ loaderData, actionData }: Route.ComponentProps) {
-  const { agent, modelOptions, allMcp, selectedMcp } = loaderData;
+  const { agent, modelOptions, allMcp, selectedMcp, allSkills, selectedSkills } = loaderData;
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
   const permissions = (agent?.permissions ?? {}) as Record<string, string>;
@@ -276,6 +304,52 @@ export default function AdminAgentEdit({ loaderData, actionData }: Route.Compone
                 ))}
                 {allMcp.length === 0 && (
                   <Typography color="text.secondary">No MCP servers configured.</Typography>
+                )}
+              </FormGroup>
+            </Box>
+
+            <Box>
+              <Typography variant="subtitle2">Skills available to this agent</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                The agent sees each ticked skill's description and loads its instructions when a
+                task calls for it. Unticked skills, and opencode's own built-in skills, are hidden
+                from it. <MuiLink component={Link} to="/admin/skills">
+                  Manage skills
+                </MuiLink>
+              </Typography>
+              <FormGroup>
+                {allSkills.map((sk) => (
+                  <FormControlLabel
+                    key={sk.id}
+                    sx={{ alignItems: "flex-start", mb: 0.5 }}
+                    control={
+                      <Checkbox
+                        name="skillIds"
+                        value={sk.id}
+                        defaultChecked={selectedSkills.includes(sk.id)}
+                        sx={{ pt: 0.25 }}
+                      />
+                    }
+                    label={
+                      <Box>
+                        <Typography component="span" sx={{ fontFamily: "monospace" }}>
+                          {sk.name}
+                        </Typography>
+                        {!sk.enabled && (
+                          <Typography component="span" color="text.secondary">
+                            {" "}
+                            (disabled — withheld until enabled)
+                          </Typography>
+                        )}
+                        <Typography variant="body2" color="text.secondary">
+                          {sk.description}
+                        </Typography>
+                      </Box>
+                    }
+                  />
+                ))}
+                {allSkills.length === 0 && (
+                  <Typography color="text.secondary">No skills defined.</Typography>
                 )}
               </FormGroup>
             </Box>

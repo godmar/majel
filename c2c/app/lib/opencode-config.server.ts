@@ -1,13 +1,17 @@
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "./db.server";
 import {
   agentMcpServers,
+  agentSkills,
   mcpServers,
   providers,
+  skillFiles,
+  skills,
   userProviderKeys,
   type AgentDefinition,
   type Provider,
 } from "./schema.server";
+import type { SkillFields } from "./skills";
 
 /**
  * Provider referenced by a "<provider>/<modelID>" model string, with the
@@ -123,6 +127,53 @@ export const DENIED_TOOLS = ["webfetch", "websearch", "question"] as const;
 const AGENT_HOME = "/home/agent";
 
 /**
+ * Where opencode looks for global skills (one <name>/SKILL.md per skill). The
+ * pod mounts the agent's granted skills here, read-only.
+ */
+export const SKILLS_DIR = `${AGENT_HOME}/.config/opencode/skills`;
+
+export interface GrantedSkill extends SkillFields {
+  files: { path: string; content: Buffer; executable: boolean }[];
+}
+
+/** Enabled skills granted to an agent, in name order, with their files. */
+export async function grantedSkills(agent: AgentDefinition): Promise<GrantedSkill[]> {
+  const rows = await db
+    .select({
+      id: skills.id,
+      name: skills.name,
+      description: skills.description,
+      license: skills.license,
+      compatibility: skills.compatibility,
+      metadata: skills.metadata,
+      body: skills.body,
+    })
+    .from(agentSkills)
+    .innerJoin(skills, eq(agentSkills.skillId, skills.id))
+    .where(and(eq(agentSkills.agentDefinitionId, agent.id), eq(skills.enabled, true)))
+    .orderBy(asc(skills.name));
+  if (rows.length === 0) return [];
+
+  const files = await db
+    .select({
+      skillId: skillFiles.skillId,
+      path: skillFiles.path,
+      content: skillFiles.content,
+      executable: skillFiles.executable,
+    })
+    .from(skillFiles)
+    .where(inArray(skillFiles.skillId, rows.map((r) => r.id)))
+    .orderBy(asc(skillFiles.path));
+
+  return rows.map(({ id, ...skill }) => ({
+    ...skill,
+    files: files
+      .filter((f) => f.skillId === id)
+      .map(({ path, content, executable }) => ({ path, content, executable })),
+  }));
+}
+
+/**
  * Every permission key opencode 1.18 knows, spelled out.
  *
  * Leaving a key unset does NOT mean "allow": opencode ships built-in "ask"
@@ -133,7 +184,10 @@ const AGENT_HOME = "/home/agent";
  * `GET /agent` on a running server prints the resolved ruleset; the sandbox
  * smoke test asserts against it.
  */
-function renderPermissions(configured: Record<string, string>): Record<string, unknown> {
+function renderPermissions(
+  configured: Record<string, string>,
+  skillNames: string[],
+): Record<string, unknown> {
   // Admin-configurable, "allow" | "deny" (see agent_definitions.permissions).
   const read = configured.read ?? "allow";
   const edit = configured.edit ?? "allow";
@@ -152,14 +206,22 @@ function renderPermissions(configured: Record<string, string>): Record<string, u
     lsp: read,
     // Subagents are allowed and inherit this same policy via the root block.
     task: "allow",
-    skill: "allow",
+    // Only the skills granted to this agent. The pod mounts no others, but
+    // opencode also ships built-in skills (e.g. "customize-opencode") and
+    // would load any found in the workspace; the deny hides all of those.
+    skill: { "*": "deny", ...Object.fromEntries(skillNames.map((n) => [n, "allow"])) },
     todowrite: "allow",
     // Confine the agent to its workspace, while preserving the two paths
-    // opencode itself needs (it writes large tool results out of band).
+    // opencode itself needs (it writes large tool results out of band) and
+    // the granted skills, whose scripts and reference files the agent is
+    // told to use from where they are mounted (read-only). opencode adds
+    // that last allow itself when a skill loads, but this deny would
+    // override it.
     external_directory: {
       "*": "deny",
       [`${AGENT_HOME}/.local/share/opencode/tool-output/*`]: "allow",
       "/tmp/opencode/*": "allow",
+      [`${SKILLS_DIR}/*`]: "allow",
     },
     // Defaults to "ask" upstream, which would hang the pod.
     doom_loop: "deny",
@@ -172,11 +234,15 @@ function renderPermissions(configured: Record<string, string>): Record<string, u
  * allowed MCP servers, and the provider referenced by the model string
  * ("<provider>/<modelID>"), using the requesting user's API key. The result
  * is mounted into the sandbox pod and pointed to by OPENCODE_CONFIG.
+ *
+ * Pass the skills that will be mounted into the pod so the permission grants
+ * exactly those; omitted, they are looked up.
  */
 export async function renderOpencodeConfig(
   agent: AgentDefinition,
   modelOverride?: string | null,
   userId?: number | null,
+  skillSet?: SkillFields[],
 ): Promise<Record<string, unknown>> {
   const model = modelOverride ?? agent.model;
   const provider = await providerForModel(model);
@@ -215,7 +281,8 @@ export async function renderOpencodeConfig(
     };
   }
 
-  const permission = renderPermissions(agent.permissions);
+  const skillNames = (skillSet ?? (await grantedSkills(agent))).map((sk) => sk.name);
+  const permission = renderPermissions(agent.permissions, skillNames);
 
   return {
     $schema: "https://opencode.ai/config.json",

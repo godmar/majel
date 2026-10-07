@@ -7,7 +7,7 @@ A container-based agent platform for Virginia Tech Libraries. It has two parts:
 
 1. **C2C server** (`c2c/`) — a command-and-control web application (React Router v7 +
    TypeScript + Material UI) with CAS authentication. Admins configure LLM providers,
-   MCP servers, and agent definitions; users submit tasks (a prompt plus optional
+   MCP servers, skills, and agent definitions; users submit tasks (a prompt plus optional
    files) to a configured agent and monitor status, live activity, and results.
    Data lives in Postgres. Deployed as the `agent-supervisor` container image.
 2. **Sandboxed agents** (`sandbox/`) — short-lived Kubernetes Jobs running the
@@ -104,6 +104,20 @@ subagents (`general`, `explore`) ship with bash and network tools allowed, and
 without the root block a primary agent could reach the network by delegating
 to one. `sandbox/test/smoke.sh` asserts this against a live opencode; run it
 after any opencode upgrade.
+
+**Skills.** Admins define [agent skills](https://opencode.ai/docs/skills/)
+under Administration → Skills and grant them per agent. A skill is a
+`SKILL.md` (frontmatter plus instructions) and optional supporting files —
+scripts, reference documents, templates — up to 256 KB per skill. At launch
+the C2C renders each granted skill and its files into the task's Secret and
+projects them read-only at `~/.config/opencode/skills/<name>/`, with mode 0755
+for files marked executable. It pins the `skill` permission to `"*": "deny"`
+plus an allow for each granted name, which also hides the skills opencode
+ships built in, and allows that folder under `external_directory` so the
+agent can read and run what a skill ships (opencode tells the model the
+skill's folder and lists its files when it loads the skill). The smoke test
+checks that the model is offered exactly the granted skills and that a skill's
+files can be read and run under this policy.
 
 Anything opencode still stops to ask about is **refused** by the runner and
 recorded as a task event. That is a liveness guard, not the policy — it turns

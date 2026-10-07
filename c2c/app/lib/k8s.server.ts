@@ -3,13 +3,23 @@ import { eq } from "drizzle-orm";
 import { db } from "./db.server";
 import { egressProxyConfigured, mintEgressCredential } from "./egress.server";
 import { env } from "./env.server";
-import { egressAllowlist, renderOpencodeConfig } from "./opencode-config.server";
+import {
+  egressAllowlist,
+  grantedSkills,
+  renderOpencodeConfig,
+  SKILLS_DIR,
+  type GrantedSkill,
+} from "./opencode-config.server";
 import { mintRunnerToken } from "./runner-credential.server";
 import { agentDefinitions, tasks } from "./schema.server";
+import { renderSkillMarkdown } from "./skills";
 import { addTaskEvent } from "./tasks.server";
 
 const NAMESPACE = env.K8S_NAMESPACE;
 const IMAGE_PULL_SECRET = "registry-secret";
+
+// Kubernetes refuses a Secret over 1 MiB; leave headroom for its metadata.
+const MAX_SECRET_BYTES = 900 * 1024;
 
 declare global {
   var __kubeConfig: k8s.KubeConfig | undefined;
@@ -49,6 +59,30 @@ function nodeSelector(): Record<string, string> | undefined {
 }
 
 /**
+ * How granted skills travel in the task's Secret: each becomes
+ * <name>/SKILL.md plus its supporting files, projected into the skills
+ * folder. Skill names are [a-z0-9-] and file keys are indexed, so every key
+ * is a valid Secret key whatever the file is called. Supporting files may be
+ * binary (an .xlsx template), so they go in as base64 `data`.
+ */
+export function skillSecretEntries(skillSet: GrantedSkill[]) {
+  const stringData: Record<string, string> = {};
+  const data: Record<string, string> = {};
+  const items: { key: string; path: string; mode: number }[] = [];
+  for (const sk of skillSet) {
+    const key = `skill-${sk.name}`;
+    stringData[key] = renderSkillMarkdown(sk);
+    items.push({ key, path: `${sk.name}/SKILL.md`, mode: 0o644 });
+    sk.files.forEach((f, i) => {
+      const fileKey = `skillfile-${sk.name}-${i}`;
+      data[fileKey] = f.content.toString("base64");
+      items.push({ key: fileKey, path: `${sk.name}/${f.path}`, mode: f.executable ? 0o755 : 0o644 });
+    });
+  }
+  return { stringData, data, items };
+}
+
+/**
  * Launch the sandbox Job for a task: a per-task Secret carries the rendered
  * opencode config and the callback token; the Job mounts it and runs the
  * sandbox image. The Secret is owned by the Job so TTL cleanup cascades.
@@ -65,7 +99,9 @@ export async function launchTask(taskId: string): Promise<void> {
     throw new Error("SANDBOX_CONTAINER_IMAGE is not configured");
   }
 
-  const config = await renderOpencodeConfig(agent, task.modelOverride, task.createdBy);
+  const skillSet = await grantedSkills(agent);
+  const config = await renderOpencodeConfig(agent, task.modelOverride, task.createdBy, skillSet);
+  const skillEntries = skillSecretEntries(skillSet);
   const allowedHosts = await egressAllowlist(agent);
   const jobName = jobNameForTask(taskId);
   const secretName = `${jobName}-config`;
@@ -101,6 +137,23 @@ export async function launchTask(taskId: string): Promise<void> {
       })()
     : null;
 
+  const stringData: Record<string, string> = {
+    "config.json": JSON.stringify(config),
+    "cc-runner-token": runnerToken,
+    ...(proxyUrl ? { "egress-proxy-url": proxyUrl } : {}),
+    ...skillEntries.stringData,
+  };
+  const secretBytes =
+    Object.values(stringData).reduce((n, v) => n + Buffer.byteLength(v), 0) +
+    Object.values(skillEntries.data).reduce((n, v) => n + Buffer.from(v, "base64").length, 0);
+  if (secretBytes > MAX_SECRET_BYTES) {
+    throw new Error(
+      `agent "${agent.name}" carries ${Math.round(secretBytes / 1024)} KiB of config and skills, ` +
+        `over the ${MAX_SECRET_BYTES / 1024} KiB a task can take; grant it fewer skills or ` +
+        `trim their files`,
+    );
+  }
+
   await coreApi().createNamespacedSecret({
     namespace: NAMESPACE,
     body: {
@@ -108,11 +161,8 @@ export async function launchTask(taskId: string): Promise<void> {
         name: secretName,
         labels: { app: "opencode-agent", "task-id": taskId },
       },
-      stringData: {
-        "config.json": JSON.stringify(config),
-        "cc-runner-token": runnerToken,
-        ...(proxyUrl ? { "egress-proxy-url": proxyUrl } : {}),
-      },
+      stringData,
+      ...(Object.keys(skillEntries.data).length > 0 ? { data: skillEntries.data } : {}),
     },
   });
 
@@ -166,14 +216,27 @@ export async function launchTask(taskId: string): Promise<void> {
                       ]
                     : []),
                 ],
-                volumeMounts: [{ name: "opencode-config", mountPath: "/etc/opencode", readOnly: true }],
+                volumeMounts: [
+                  { name: "opencode-config", mountPath: "/etc/opencode", readOnly: true },
+                  ...(skillEntries.items.length > 0
+                    ? [{ name: "skills", mountPath: SKILLS_DIR, readOnly: true }]
+                    : []),
+                ],
                 resources: {
                   requests: { cpu: "250m", memory: "512Mi" },
                   limits: { cpu: "2", memory: "2Gi" },
                 },
               },
             ],
-            volumes: [{ name: "opencode-config", secret: { secretName } }],
+            volumes: [
+              { name: "opencode-config", secret: { secretName } },
+              // The same Secret, projected into the layout opencode discovers.
+              // Only added when there are skills: an empty items list would
+              // project every key instead.
+              ...(skillEntries.items.length > 0
+                ? [{ name: "skills", secret: { secretName, items: skillEntries.items } }]
+                : []),
+            ],
           },
         },
       },

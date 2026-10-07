@@ -215,4 +215,93 @@ jq -e '
   jq '[ .[] | { name, rules: [ .permission[]? | select(.pattern == "*") ] } ]' "$WORK/agents.json"
   echo "SMOKE TEST FAILED"; exit 1; }
 
+# --------------------------------------------------------------- skills
+#
+# The C2C mounts an agent's granted skills, with their supporting files, at
+# ~/.config/opencode/skills and pins the skill permission to deny everything
+# else, which must also hide the skills opencode ships built in. The
+# workspace confinement (external_directory) has to let the agent read and run
+# those files, or a skill's scripts are useless. Both rules are mirrored from
+# renderPermissions() in c2c/app/lib/opencode-config.server.ts.
+#
+# Checked end to end: the skill list in the system prompt of a real request,
+# then a scripted model that loads the skill, reads and runs its files, and
+# tries to load a skill it was not granted.
+echo "--- checking skills: only granted ones offered, their files usable"
+
+for s in granted-skill ungranted-skill; do
+  mkdir -p "$WORK/skills/$s/scripts" "$WORK/skills/$s/reference"
+  printf -- '---\nname: %s\ndescription: "Smoke test skill %s."\n---\n\nRun scripts/hello.py.\n' \
+    "$s" "$s" > "$WORK/skills/$s/SKILL.md"
+done
+printf 'print("hello from the skill script")\n' > "$WORK/skills/granted-skill/scripts/hello.py"
+printf 'reference notes for the skill\n' > "$WORK/skills/granted-skill/reference/notes.md"
+jq '.permission = {
+      skill: { "*": "deny", "granted-skill": "allow" },
+      external_directory: {
+        "*": "deny",
+        "/home/agent/.local/share/opencode/tool-output/*": "allow",
+        "/tmp/opencode/*": "allow",
+        "/home/agent/.config/opencode/skills/*": "allow"
+      }
+    }
+    | .agent.SmokeTest.permission += .permission' \
+  "$WORK/config.json" > "$WORK/skills.json"
+
+FAKE_LLM_MODE=skill-files FAKE_LLM_DUMP="$WORK/request.json" \
+  node "$DIR/fake-llm.mjs" > "$WORK/fake-llm.log" 2>&1 &
+SKILLS=$(docker run --rm -d --network host \
+  -e OPENCODE_CONFIG=/etc/opencode/config.json \
+  -v "$WORK/skills.json":/etc/opencode/config.json:ro \
+  -v "$WORK/skills":/home/agent/.config/opencode/skills:ro \
+  --entrypoint opencode "$IMAGE" serve --hostname 127.0.0.1 --port 4098)
+trap 'docker rm -f $POLICY $SKILLS >/dev/null 2>&1; kill $(jobs -p) 2>/dev/null || true; rm -rf "$WORK"' EXIT
+
+for i in $(seq 1 30); do
+  curl -sf http://127.0.0.1:4098/global/health >/dev/null 2>&1 && break; sleep 1
+done
+SID=$(curl -sf -X POST http://127.0.0.1:4098/session -H 'content-type: application/json' -d '{}' | jq -r .id)
+curl -sf -X POST "http://127.0.0.1:4098/session/$SID/prompt_async" \
+  -H 'content-type: application/json' -d '{"parts":[{"type":"text","text":"hi"}]}' >/dev/null
+for i in $(seq 1 60); do
+  curl -sf "http://127.0.0.1:4098/session/$SID/message" > "$WORK/skills-run.json" 2>/dev/null \
+    && jq -e '.[-1].info.finish == "stop"' "$WORK/skills-run.json" >/dev/null 2>&1 && break
+  sleep 1
+done
+
+jq -r '[.messages[] | select(.role == "system") | .content
+        | if type == "string" then . else (map(.text // "") | join("\n")) end] | join("\n")' \
+  "$WORK/request.json" > "$WORK/system.txt" 2>/dev/null || true
+if grep -q "<name>granted-skill</name>" "$WORK/system.txt" \
+   && ! grep -q "<name>ungranted-skill</name>" "$WORK/system.txt" \
+   && ! grep -q "<name>customize-opencode</name>" "$WORK/system.txt"; then
+  echo "only granted skills offered OK"
+else
+  echo "FAILED: the model was not offered exactly the granted skill:"
+  grep -o "<name>[^<]*</name>" "$WORK/system.txt" || echo "(no skills listed)"
+  echo "SMOKE TEST FAILED"; exit 1
+fi
+
+# The scripted calls, in order: tool, expected status, text the output must contain.
+jq -c '[.[] | .parts[]? | select(.type == "tool")
+        | { tool, status: .state.status, out: (.state.output // .state.error // "") }]' \
+  "$WORK/skills-run.json" > "$WORK/skill-calls.json"
+SKILL_FAIL=0
+check_call() { # <index> <what> <status> <substring>
+  if jq -e --argjson i "$1" --arg st "$3" --arg sub "$4" \
+       '.[$i] | .status == $st and (.out | contains($sub))' "$WORK/skill-calls.json" >/dev/null; then
+    echo "  $2 OK"
+  else
+    echo "  FAILED: $2"; jq --argjson i "$1" '.[$i] | .out |= .[0:400]' "$WORK/skill-calls.json"
+    SKILL_FAIL=1
+  fi
+}
+check_call 0 "granted skill loads and lists its files" completed "scripts/hello.py"
+check_call 1 "read tool can read a skill file" completed "hello from the skill script"
+check_call 2 "bash can run a skill script" completed "hello from the skill script"
+check_call 3 "bash can read a skill reference file" completed "reference notes for the skill"
+check_call 4 "ungranted skill is refused" error ""
+if [ "$SKILL_FAIL" = 1 ]; then echo "SMOKE TEST FAILED"; exit 1; fi
+echo "skill files usable OK"
+
 echo "SMOKE TEST PASSED"
